@@ -11,3 +11,4 @@ export default function Home(){return <main>
  <footer className="footer"><div className="wrap" style={{display:'flex',justifyContent:'space-between',flexWrap:'wrap',gap:20}}><span>© 2026 ARABIAN TAILORS</span><span className="brand" style={{fontSize:11}}>ELEGANCE, TAILORED FOR YOU</span><span>India · INR</span></div></footer><nav className="bottomnav"><a href="#shop">Discover</a><Link href="/customize">Custom</Link><a href="#shop">Wishlist</a><a href="#">Account</a></nav>
  </main>}
 
+
