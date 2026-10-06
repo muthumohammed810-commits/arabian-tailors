@@ -1,12 +1,12 @@
 # ARABIAN TAILORS
 
-Luxury tailoring storefront foundation for ARABIAN TAILORS — “Elegance, Tailored for You.”
+Luxury tailoring storefront for ARABIAN TAILORS — “Elegance, Tailored for You.”
 
 ## Stack
 
 - Next.js App Router, React, TypeScript
 - Tailwind CSS 4 with custom design tokens
-- PostgreSQL + Prisma planned for persistence
+- Private Vercel Blob JSON storage for store configuration, catalog and orders
 - Vercel deployment target
 
 ## Local development
@@ -20,11 +20,12 @@ pnpm dev
 
 Open http://localhost:3000.
 
-## Current scope
+## Admin dashboard
 
-The storefront and guided Kandura configurator are a UI foundation with illustrative catalog and prices. It does not yet persist accounts or orders, process payment, reserve inventory, or provide a production admin dashboard. See [the architecture plan](outputs/architecture-plan.md) for the phased delivery plan and business configuration required.
+The password-protected dashboard manages stored orders, customers derived from order delivery details, products/services, store appearance and manually reconciled payment status. Admin mutations are validated server-side. Customer removal deletes associated order records and requires typing the customer email. Payment status changes are restricted to pending payments reviewed by an admin; this app does not collect payments automatically.
 
 ## Deployment
 
-Vercel can build this repository using its Next.js preset and the `pnpm build` script. Configure Git integration after importing the repository. No secrets are needed for the current UI-only routes. Add database, authentication, payment, storage and notification environment variables only when those integrations are implemented.
+Configure `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET` and `BLOB_READ_WRITE_TOKEN` as server-side Vercel environment variables. Keep all three private and never commit their values. Connect a private Vercel Blob store to persist shared catalog, settings and order records.
 
+The checkout can show UPI QR and bank transfer instructions configured in the admin. Transfers must be reconciled manually. For automatic card or UPI collection, connect a payment provider account and implement its private server-side keys and verified webhook flow. Never use `NEXT_PUBLIC_` for secrets.
