@@ -26,14 +26,14 @@ function logOrderWriteFailure(orderId: string, error: unknown) {
 }
 function validCustomizationSteps(value: unknown) {
   if (value === undefined) return true;
-  if (!Array.isArray(value) || value.length > 40) return false;
+  if (!Array.isArray(value)) return false;
   const ids = new Set<string>();
   return value.every((step: any) => {
-    if (!step || typeof step !== 'object' || Array.isArray(step) || !validText(step.id, 100) || ids.has(step.id) || !validText(step.title, 120) || (step.description !== undefined && (typeof step.description !== 'string' || step.description.length > 500)) || !Array.isArray(step.options) || step.options.length > 100) return false;
+    if (!step || typeof step !== 'object' || Array.isArray(step) || !validText(step.id, 100) || ids.has(step.id) || !validText(step.title, 120) || (step.description !== undefined && (typeof step.description !== 'string' || step.description.length > 500)) || (step.required !== undefined && typeof step.required !== 'boolean') || !Array.isArray(step.options)) return false;
     ids.add(step.id);
     const optionIds = new Set<string>();
     return step.options.every((option: any) => {
-      if (!option || typeof option !== 'object' || Array.isArray(option) || !validText(option.id, 100) || optionIds.has(option.id) || !validText(option.name, 160) || (option.priceAdjustment !== undefined && (!Number.isFinite(option.priceAdjustment) || Math.abs(option.priceAdjustment) > 1_000_000)) || (option.available !== undefined && typeof option.available !== 'boolean')) return false;
+      if (!option || typeof option !== 'object' || Array.isArray(option) || !validText(option.id, 100) || optionIds.has(option.id) || !validText(option.name, 160) || (option.description !== undefined && (typeof option.description !== 'string' || option.description.length > 500)) || (option.image !== undefined && (typeof option.image !== 'string' || option.image.length > 2000)) || (option.priceAdjustment !== undefined && (!Number.isFinite(option.priceAdjustment) || Math.abs(option.priceAdjustment) > 1_000_000)) || (option.available !== undefined && typeof option.available !== 'boolean')) return false;
       optionIds.add(option.id);
       return true;
     });

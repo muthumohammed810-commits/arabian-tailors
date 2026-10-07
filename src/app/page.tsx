@@ -6,7 +6,7 @@ import { ArrowLeft, ArrowRight, ArrowUpRight, Menu, X, ChevronLeft, ChevronRight
 import { products as catalogProducts, styles as tailoringStyles, type Product } from '@/lib/catalog';
 import { GarmentVisual } from '@/components/garment-visual';
 
-type StoreProduct = Product & { available?: boolean; stock?: number; stitchingType?: string; customizationSteps?: { id: string; title: string; description?: string; options: { id: string; name: string; priceAdjustment?: number; available?: boolean }[] }[] };
+type StoreProduct = Product & { available?: boolean; stock?: number; stitchingType?: string; customizationSteps?: { id: string; title: string; description?: string; required?: boolean; options: { id: string; name: string; description?: string; image?: string; priceAdjustment?: number; available?: boolean }[] }[] };
 type Category = 'All' | 'Abaya' | 'Kandura' | 'Fabrics' | 'Stitching' | 'Custom Design';
 type Card = { id: string; name: string; category: string; price: number; image: string; description: string; tag?: string; href: string; rating?: number; reviews?: number; garmentKind?: 'abaya' | 'kandura' };
 
