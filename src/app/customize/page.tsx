@@ -114,7 +114,8 @@ export default function Customize() {
   async function placeOrder() {
     if (submitting) return;
     setSubmitting(true);
-    const id = `AT-${Date.now().toString().slice(-6)}`;
+    const orderIdBytes = crypto.getRandomValues(new Uint8Array(16));
+    const id = `AT-${Array.from(orderIdBytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
     const fit = sizing === 'standard' ? `Standard · ${size}` : `Custom (${unit}): ${Object.entries(measurements).map(([key, value]) => `${key} ${value || '—'}`).join(', ')}`;
     const productName = selectedProduct?.name || `${currentStyle.name} Kandura`;
     const chosenCustomOptions = customSteps.map((item) => ({ stepId: item.id, step: item.title, optionId: customSelections[item.id]?.id || '', option: customSelections[item.id]?.name || '', priceAdjustment: customSelections[item.id]?.priceAdjustment || 0 }));

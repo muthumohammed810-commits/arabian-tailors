@@ -13,6 +13,17 @@ type Store = { products: any[]; settings: Record<string, any> };
 const defaultStore = (): Store => ({ products: catalog.map(p => ({ ...p, stock: 0, available: true, stitchingType: '', options: [] })), settings: {} });
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 const validText = (value: unknown, max = 500) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
+function logOrderWriteFailure(orderId: string, error: unknown) {
+  const details = error && typeof error === 'object' ? error as { name?: unknown; code?: unknown; status?: unknown; statusCode?: unknown } : {};
+  const safeLabel = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(value) ? value : undefined;
+  const status = Number(details.statusCode ?? details.status);
+  console.error('[store-data] Vercel Blob order write failed', {
+    orderId,
+    errorName: safeLabel(details.name),
+    errorCode: safeLabel(details.code),
+    statusCode: Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined,
+  });
+}
 function validCustomizationSteps(value: unknown) {
   if (value === undefined) return true;
   if (!Array.isArray(value) || value.length > 40) return false;
@@ -154,9 +165,12 @@ export async function PUT(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Shared storage is not connected.' }, 503);
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.error('[store-data] Order persistence unavailable: BLOB_READ_WRITE_TOKEN is not configured', { vercelEnvironment: process.env.VERCEL_ENV || 'unknown' });
+    return json({ error: 'Shared storage is not connected.' }, 503);
+  }
   const order = await request.json().catch(() => null);
-  if (!order || !validText(order.id, 100) || !/^AT-[0-9]{6,}$/.test(order.id) || !validText(order.customer, 160) || !validText(order.product, 240) || !Number.isFinite(order.total) || order.total < 0 || !statuses.includes(order.status) || !validEmail(order.delivery?.email) || !validText(order.delivery?.phone, 40) || !validText(order.delivery?.address, 500) || !validText(order.delivery?.city, 100) || !validText(order.delivery?.postal, 20)) return json({ error: 'Invalid order.' }, 400);
+  if (!order || !validText(order.id, 100) || !/^AT-(?:[0-9]{6,}|[0-9a-f]{32})$/i.test(order.id) || !validText(order.customer, 160) || !validText(order.product, 240) || !Number.isFinite(order.total) || order.total < 0 || !statuses.includes(order.status) || !validEmail(order.delivery?.email) || !validText(order.delivery?.phone, 40) || !validText(order.delivery?.address, 500) || !validText(order.delivery?.city, 100) || !validText(order.delivery?.postal, 20)) return json({ error: 'Invalid order.' }, 400);
   if (order.productId !== undefined && (!validText(order.productId, 100) || !validText(order.productName, 160) || (order.productImage !== undefined && (typeof order.productImage !== 'string' || order.productImage.length > 2000)) || !Number.isFinite(order.basePrice) || order.basePrice < 0)) return json({ error: 'Invalid product details.' }, 400);
   try {
     const clean = {
@@ -173,5 +187,8 @@ export async function POST(request: Request) {
     };
     await put(`${ORDER_PREFIX}${clean.id}.json`, JSON.stringify(clean), { access: 'private', addRandomSuffix: false, allowOverwrite: false, contentType: 'application/json' });
     return json({ ok: true }, 201);
-  } catch { return json({ error: 'Could not save order.' }, 500); }
+  } catch (error) {
+    logOrderWriteFailure(order.id, error);
+    return json({ error: 'Could not save order.' }, 500);
+  }
 }
