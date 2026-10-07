@@ -6,16 +6,16 @@ import { ArrowLeft, ArrowRight, ArrowUpRight, Menu, X, ChevronLeft, ChevronRight
 import { products as catalogProducts, styles as tailoringStyles, type Product } from '@/lib/catalog';
 import { GarmentVisual } from '@/components/garment-visual';
 
-type StoreProduct = Product & { available?: boolean; stock?: number; stitchingType?: string; customizationSteps?: { id: string; title: string; description?: string; required?: boolean; options: { id: string; name: string; description?: string; image?: string; priceAdjustment?: number; available?: boolean }[] }[] };
+type StoreProduct = Product & { images?: string[]; available?: boolean; stock?: number; stitchingType?: string; customizationSteps?: { id: string; title: string; description?: string; required?: boolean; available?: boolean; options: { id: string; name: string; description?: string; image?: string; priceAdjustment?: number; available?: boolean }[] }[] };
 type Category = 'All' | 'Abaya' | 'Kandura' | 'Fabrics' | 'Stitching' | 'Custom Design';
-type Card = { id: string; name: string; category: string; price: number; image: string; description: string; tag?: string; href: string; rating?: number; reviews?: number; garmentKind?: 'abaya' | 'kandura' };
+type Card = { id: string; name: string; category: string; price: number; image: string; images?: string[]; description: string; tag?: string; href: string; rating?: number; reviews?: number; garmentKind?: 'abaya' | 'kandura' };
 
 const categories: Category[] = ['All', 'Abaya', 'Kandura', 'Fabrics', 'Stitching', 'Custom Design'];
 function toCard(product: StoreProduct): Card {
   const category = product.category.toLowerCase();
   return {
     id: product.id, name: product.name, category: product.category, price: product.price,
-    image: product.image, description: product.description, tag: product.tag,
+    image: product.images?.[0] || product.image, images: product.images?.length ? product.images : [product.image], description: product.description, tag: product.tag,
     href: category === 'kandura' || category === 'abaya' || product.customizationSteps?.length ? `/customize?product=${encodeURIComponent(product.id)}` : '#collection',
     garmentKind: category === 'abaya' ? 'abaya' : category === 'kandura' ? 'kandura' : undefined,
     rating: product.rating, reviews: product.reviews,
