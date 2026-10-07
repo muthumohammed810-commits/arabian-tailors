@@ -16,7 +16,7 @@ function toCard(product: StoreProduct): Card {
   return {
     id: product.id, name: product.name, category: product.category, price: product.price,
     image: product.image, description: product.description, tag: product.tag,
-    href: category === 'kandura' ? '/customize' : category === 'abaya' || product.customizationSteps?.length ? `/customize?product=${encodeURIComponent(product.id)}` : '#collection',
+    href: category === 'kandura' || category === 'abaya' || product.customizationSteps?.length ? `/customize?product=${encodeURIComponent(product.id)}` : '#collection',
     garmentKind: category === 'abaya' ? 'abaya' : category === 'kandura' ? 'kandura' : undefined,
     rating: product.rating, reviews: product.reviews,
   };

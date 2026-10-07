@@ -1,5 +1,6 @@
 export type CustomizationDefaultOption = { name: string; priceAdjustment: number; available: boolean };
-export type CustomizationDefaultStep = { title: string; required: boolean; options: CustomizationDefaultOption[] };
+export type CustomizationDefaultStep = { title: string; required: boolean; available?: boolean; options: CustomizationDefaultOption[] };
+export type DefaultMeasurement = { name: string; unit: 'cm' | 'inch'; required: boolean; available: boolean };
 
 const options = (names: string[]): CustomizationDefaultOption[] => names.map(name => ({ name, priceAdjustment: 0, available: true }));
 const productionOptions = (): CustomizationDefaultOption[] => [
@@ -10,7 +11,7 @@ const productionOptions = (): CustomizationDefaultOption[] => [
 
 export const customizationDefaults: Record<'kandura' | 'abaya', CustomizationDefaultStep[]> = {
   kandura: [
-    { title: 'Kandura Style', required: true, options: options(['Emirati', 'Saudi', 'Omani', 'Kuwaiti', 'Qatari', 'Bahraini', 'Indian', 'Moroccan', 'Custom']) },
+    { title: 'Choose Your Kandura Model', required: true, options: options(['Saudi Kandura', 'Emirati Kandura', 'Omani Kandura', 'Kuwaiti Kandura', 'Qatari Kandura', 'Bahraini Kandura', 'Indian Kandura', 'Moroccan Kandura', 'Custom Model']) },
     { title: 'Fabric', required: true, options: options(['Cotton', 'Premium Cotton', 'Linen', 'Polyester', 'Wool Blend', 'Silk Blend', 'Premium Fabric', 'Custom Fabric']) },
     { title: 'Color', required: true, options: options(['White', 'Off White', 'Cream', 'Ivory', 'Beige', 'Black', 'Navy', 'Grey', 'Brown', 'Custom Color']) },
     { title: 'Collar Style', required: true, options: options(['Standard', 'Emirati', 'Mandarin', 'Round', 'Hidden', 'Custom']) },
@@ -43,15 +44,20 @@ export const customizationDefaults: Record<'kandura' | 'abaya', CustomizationDef
     { title: 'Fit', required: true, options: options(['Regular', 'Relaxed', 'Loose', 'Custom']) },
     { title: 'Size', required: true, options: options(['S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'Custom Measurements']) },
     { title: 'Personalization', required: true, options: options(['None', 'Name Embroidery', 'Initials', 'Custom Text']) },
-    { title: 'Custom Measurements', required: true, options: options(['Standard Measurements', 'Enter Custom Measurements']) },
+    { title: 'Custom Measurements', required: true, available: false, options: options(['Standard Measurements', 'Enter Custom Measurements']) },
     { title: 'Production & Delivery', required: true, options: productionOptions() },
   ],
+};
+
+export const defaultMeasurements: Record<'kandura' | 'abaya', DefaultMeasurement[]> = {
+  kandura: ['Chest', 'Shoulder', 'Sleeve Length', 'Length', 'Neck', 'Width'].map(name => ({ name, unit: 'cm', required: false, available: true })),
+  abaya: ['Bust', 'Shoulder', 'Sleeve Length', 'Length', 'Waist', 'Hip'].map(name => ({ name, unit: 'cm', required: false, available: true })),
 };
 
 type StoreForCustomizationMerge = { products: any[] };
 const normalizedChoice = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
 const stepAliases: Record<string, string[]> = {
-  'kandura style': ['style'], 'abaya style': ['style'], color: ['colour'], 'collar style': ['collar'], 'cuff style': ['cuff'], cuff: ['cuff style'],
+  'choose your kandura model': ['kandura style', 'style', 'choose kandura model'], 'kandura style': ['style'], 'abaya style': ['style'], color: ['colour'], 'collar style': ['collar'], 'cuff style': ['cuff'], cuff: ['cuff style'],
   'front placket style': ['front style', 'placket', 'placket style', 'front placket'], 'front style': ['front placket style', 'placket', 'placket style'], 'pocket style': ['pocket'], pocket: ['pocket style'],
   buttons: ['button style'], 'name personalization': ['personalization', 'name', 'name embroidery'],
   'delivery production': ['production delivery', 'delivery', 'production'], 'production delivery': ['delivery production', 'delivery', 'production'],
@@ -63,13 +69,50 @@ function customizationStepMatches(existingTitle: string, defaultTitle: string) {
   return existing === target || (stepAliases[target] || []).some(alias => normalizedChoice(alias) === existing);
 }
 
+const normalizedModel = (value: string) => {
+  const normalized = normalizedChoice(value);
+  return normalized === 'custom' || normalized === 'custom model' ? 'custom model' : normalized.replace(/ kandura$/, '');
+};
+
 /** Adds missing defaults in place while retaining existing step/option records and prices. */
 export function addDefaultCustomization(store: StoreForCustomizationMerge) {
   let changed = false;
   for (const product of store.products) {
     const category = String(product.category || '').toLowerCase();
-    const templates = category === 'kandura' ? customizationDefaults.kandura : category === 'abaya' ? customizationDefaults.abaya : undefined;
+    const garment = category === 'kandura' || category === 'abaya' ? category : undefined;
+    const templates = garment ? customizationDefaults[garment] : undefined;
     if (!templates) continue;
+    const needsInitialConfiguration = !Array.isArray(product.customizationSteps) || product.customizationSteps.length === 0;
+    if (!needsInitialConfiguration) {
+      if (!Array.isArray(product.measurements)) product.measurements = [];
+      if (product.measurementsEnabled === undefined) { product.measurementsEnabled = true; changed = true; }
+      if (garment === 'abaya') {
+        const legacyMeasurementsStep = product.customizationSteps.find((candidate: any) => candidate && typeof candidate.title === 'string' && normalizedChoice(candidate.title) === 'custom measurements');
+        if (legacyMeasurementsStep && legacyMeasurementsStep.available === undefined) { legacyMeasurementsStep.available = false; changed = true; }
+      }
+      for (const field of defaultMeasurements[garment!]) {
+        if (product.measurements.some((measurement: any) => measurement && typeof measurement.name === 'string' && normalizedChoice(measurement.name) === normalizedChoice(field.name))) continue;
+        const baseId = `measure-${garment}-${normalizedChoice(field.name).replaceAll(' ', '-')}`;
+        let id = baseId, suffix = 2;
+        while (product.measurements.some((measurement: any) => measurement?.id === id)) id = `${baseId}-${suffix++}`;
+        product.measurements.push({ id, ...field });
+        changed = true;
+      }
+      if (garment === 'kandura') {
+        const modelStep = product.customizationSteps.find((candidate: any) => candidate && typeof candidate.title === 'string' && customizationStepMatches(candidate.title, 'Choose Your Kandura Model'));
+        if (modelStep) {
+          if (modelStep.title !== 'Choose Your Kandura Model') { modelStep.title = 'Choose Your Kandura Model'; changed = true; }
+          for (const option of modelStep.options || []) {
+            const label = typeof option.name === 'string' ? option.name : '';
+            const target = customizationDefaults.kandura[0].options.find(item => normalizedModel(item.name) === normalizedModel(label));
+            if (target && label !== target.name) { option.name = target.name; changed = true; }
+          }
+          const modelIndex = product.customizationSteps.indexOf(modelStep);
+          if (modelIndex > 0) { product.customizationSteps.splice(modelIndex, 1); product.customizationSteps.unshift(modelStep); changed = true; }
+        }
+      }
+      continue;
+    }
     if (!Array.isArray(product.customizationSteps)) product.customizationSteps = [];
     for (const template of templates) {
       let step = product.customizationSteps.find((candidate: any) => candidate && typeof candidate.title === 'string' && customizationStepMatches(candidate.title, template.title));
@@ -80,20 +123,60 @@ export function addDefaultCustomization(store: StoreForCustomizationMerge) {
         step = { id, title: template.title, required: template.required, options: [] };
         product.customizationSteps.push(step);
         changed = true;
+      } else if (step.title !== template.title) {
+        step.title = template.title;
+        changed = true;
+      }
+      if (step.available === undefined) {
+        step.available = template.available !== false;
+        changed = true;
+      }
+      if (template.available === false && step.available !== false && normalizedChoice(template.title) === 'custom measurements') {
+        step.available = false;
+        changed = true;
       }
       if (!Array.isArray(step.options)) step.options = [];
       const existingFabricOptions = normalizedChoice(template.title) === 'fabric'
         ? store.products.filter((candidate: any) => String(candidate.category || '').toLowerCase() === 'fabric' && typeof candidate.name === 'string').map((candidate: any) => ({ name: candidate.name, priceAdjustment: Number.isFinite(candidate.price) && candidate.price >= 0 && candidate.price <= 1_000_000 ? candidate.price : 0, available: candidate.available !== false }))
         : [];
       for (const templateOption of [...template.options, ...existingFabricOptions]) {
-        const exists = step.options.some((option: any) => option && typeof option.name === 'string' && normalizedChoice(option.name) === normalizedChoice(templateOption.name));
-        if (exists) continue;
+        const existingOption = step.options.find((option: any) => option && typeof option.name === 'string' && (normalizedChoice(option.name) === normalizedChoice(templateOption.name) || (normalizedChoice(template.title) === 'choose your kandura model' && normalizedModel(option.name) === normalizedModel(templateOption.name))));
+        if (existingOption) {
+          if (normalizedChoice(template.title) === 'choose your kandura model' && existingOption.name !== templateOption.name) {
+            existingOption.name = templateOption.name;
+            changed = true;
+          }
+          continue;
+        }
         const baseId = `opt-${normalizedChoice(template.title).replaceAll(' ', '-').slice(0, 30)}-${normalizedChoice(templateOption.name).replaceAll(' ', '-').slice(0, 30)}`;
         let id = baseId, suffix = 2;
         while (step.options.some((option: any) => option?.id === id)) id = `${baseId}-${suffix++}`;
         step.options.push({ id, ...templateOption });
         changed = true;
       }
+    }
+    if (garment === 'kandura') {
+      const modelIndex = product.customizationSteps.findIndex((step: any) => normalizedChoice(step.title) === 'choose your kandura model');
+      if (modelIndex > 0) {
+        const [modelStep] = product.customizationSteps.splice(modelIndex, 1);
+        product.customizationSteps.unshift(modelStep);
+        changed = true;
+      }
+    }
+    if (!Array.isArray(product.measurements)) product.measurements = [];
+    for (const field of defaultMeasurements[garment!]) {
+      const existing = product.measurements.find((measurement: any) => measurement && typeof measurement.name === 'string' && normalizedChoice(measurement.name) === normalizedChoice(field.name));
+      if (existing) {
+        for (const [key, value] of Object.entries(field)) if (existing[key] === undefined) { existing[key] = value; changed = true; }
+        if (!existing.id) { existing.id = `measure-${garment}-${normalizedChoice(field.name).replaceAll(' ', '-')}`; changed = true; }
+      } else {
+        product.measurements.push({ id: `measure-${garment}-${normalizedChoice(field.name).replaceAll(' ', '-')}`, ...field });
+        changed = true;
+      }
+    }
+    if (product.measurementsEnabled === undefined) {
+      product.measurementsEnabled = true;
+      changed = true;
     }
   }
   return changed;

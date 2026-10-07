@@ -30,7 +30,7 @@ function validCustomizationSteps(value: unknown) {
   if (!Array.isArray(value)) return false;
   const ids = new Set<string>();
   return value.every((step: any) => {
-    if (!step || typeof step !== 'object' || Array.isArray(step) || !validText(step.id, 100) || ids.has(step.id) || !validText(step.title, 120) || (step.description !== undefined && (typeof step.description !== 'string' || step.description.length > 500)) || (step.required !== undefined && typeof step.required !== 'boolean') || !Array.isArray(step.options)) return false;
+    if (!step || typeof step !== 'object' || Array.isArray(step) || !validText(step.id, 100) || ids.has(step.id) || !validText(step.title, 120) || (step.description !== undefined && (typeof step.description !== 'string' || step.description.length > 500)) || (step.required !== undefined && typeof step.required !== 'boolean') || (step.available !== undefined && typeof step.available !== 'boolean') || !Array.isArray(step.options)) return false;
     ids.add(step.id);
     const optionIds = new Set<string>();
     return step.options.every((option: any) => {
@@ -38,6 +38,16 @@ function validCustomizationSteps(value: unknown) {
       optionIds.add(option.id);
       return true;
     });
+  });
+}
+function validMeasurementFields(value: unknown) {
+  if (value === undefined) return true;
+  if (!Array.isArray(value)) return false;
+  const ids = new Set<string>();
+  return value.every((field: any) => {
+    if (!field || typeof field !== 'object' || Array.isArray(field) || !validText(field.id, 100) || ids.has(field.id) || !validText(field.name, 120) || !['cm', 'inch'].includes(field.unit) || (field.required !== undefined && typeof field.required !== 'boolean') || (field.available !== undefined && typeof field.available !== 'boolean')) return false;
+    ids.add(field.id);
+    return true;
   });
 }
 
@@ -115,7 +125,7 @@ export async function PUT(request: Request) {
       const store = await readStore(); store.settings = body.settings; await saveStore(store); return json({ ok: true, settings: store.settings });
     }
     if (body.resource === 'products') {
-      if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000))) return json({ error: 'Invalid product list.' }, 400);
+      if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && validMeasurementFields(p.measurements) && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean') && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000))) return json({ error: 'Invalid product list.' }, 400);
       if (new Set(body.products.map((p: any) => p.id)).size !== body.products.length) return json({ error: 'Product IDs must be unique.' }, 400);
       const store = await readStore(); store.products = body.products; await saveStore(store); return json({ ok: true, products: store.products });
     }
