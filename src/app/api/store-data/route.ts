@@ -2,6 +2,7 @@ import { list, get, put, del } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/app/admin/guard';
 import { products as catalog } from '@/lib/catalog';
+import { addDefaultCustomization } from '@/lib/customization-defaults';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -88,7 +89,9 @@ export async function GET() {
   if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Shared storage is not connected.' }, 503);
   try {
     const store = await readStore();
+    const migratedCustomization = addDefaultCustomization(store);
     if (await isAdminAuthenticated()) {
+      if (migratedCustomization) await saveStore(store);
       const orders = (await listOrders()).map(safePayment);
       const customers = [...new Map(orders.filter((o: any) => o.delivery?.email || o.customer).map((o: any) => {
         const d = o.delivery || {};
