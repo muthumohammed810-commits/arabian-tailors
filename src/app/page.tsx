@@ -4,18 +4,20 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, ArrowUpRight, Menu, X, ChevronLeft, ChevronRight, Plus, Minus, Star } from 'lucide-react';
 import { products as catalogProducts, styles as tailoringStyles, type Product } from '@/lib/catalog';
+import { GarmentVisual } from '@/components/garment-visual';
 
 type StoreProduct = Product & { available?: boolean; stock?: number; stitchingType?: string };
-type Category = 'All' | 'Kandura' | 'Fabrics' | 'Stitching' | 'Custom Design';
-type Card = { id: string; name: string; category: string; price: number; image: string; description: string; tag?: string; href: string; rating?: number; reviews?: number };
+type Category = 'All' | 'Abaya' | 'Kandura' | 'Fabrics' | 'Stitching' | 'Custom Design';
+type Card = { id: string; name: string; category: string; price: number; image: string; description: string; tag?: string; href: string; rating?: number; reviews?: number; garmentKind?: 'abaya' | 'kandura' };
 
-const categories: Category[] = ['All', 'Kandura', 'Fabrics', 'Stitching', 'Custom Design'];
-const heroImage = 'https://images.unsplash.com/photo-1617137968427-85924c800a22?auto=format&fit=crop&w=2200&q=90';
+const categories: Category[] = ['All', 'Abaya', 'Kandura', 'Fabrics', 'Stitching', 'Custom Design'];
 function toCard(product: StoreProduct): Card {
+  const category = product.category.toLowerCase();
   return {
     id: product.id, name: product.name, category: product.category, price: product.price,
     image: product.image, description: product.description, tag: product.tag,
-    href: product.category.toLowerCase() === 'kandura' ? '/customize' : '#collection',
+    href: category === 'kandura' ? '/customize' : category === 'abaya' ? `/customize?product=${encodeURIComponent(product.id)}` : '#collection',
+    garmentKind: category === 'abaya' ? 'abaya' : category === 'kandura' ? 'kandura' : undefined,
     rating: product.rating, reviews: product.reviews,
   };
 }
@@ -49,22 +51,25 @@ export default function Home() {
 
   const cards = useMemo<Card[]>(() => {
     const inStock = (product: StoreProduct) => product.available !== false;
+    if (category === 'Abaya') return products.filter((product) => inStock(product) && product.category.toLowerCase() === 'abaya').map(toCard);
     if (category === 'Kandura') return products.filter((product) => inStock(product) && product.category.toLowerCase() === 'kandura').map(toCard);
     if (category === 'Fabrics') return products.filter((product) => inStock(product) && product.category.toLowerCase() === 'fabric').map(toCard);
     if (category === 'Stitching') {
       const serviceProducts = products.filter((product) => inStock(product) && product.category.toLowerCase() === 'kandura');
       if (serviceProducts.length) return serviceProducts.map((product) => ({
-        ...toCard(product), category: 'Stitching',
+        ...toCard(product), category: 'Stitching', garmentKind: 'kandura',
         name: product.stitchingType ? `${product.stitchingType} tailoring` : product.name,
       }));
       return tailoringStyles.map((style) => ({
         id: `stitching-${style.id}`, name: `${style.name} tailoring`, category: 'Stitching', price: style.price,
-        image: style.image, description: style.desc, href: '/customize',
+        image: '', description: style.desc, href: '/customize', garmentKind: 'kandura',
       }));
     }
     if (category === 'Custom Design') return [];
     return products.map(toCard);
   }, [category, products]);
+  const featuredAbaya = products.find((product) => product.available !== false && product.category.toLowerCase() === 'abaya') || catalogProducts.find((product) => product.category.toLowerCase() === 'abaya');
+  const abayaHref = featuredAbaya ? `/customize?product=${encodeURIComponent(featuredAbaya.id)}` : '/customize';
 
   function moveCarousel(direction: -1 | 1) {
     const rail = railRef.current;
@@ -105,7 +110,7 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="hero editorial-hero" style={{ backgroundImage: `url('${storeSettings.heroImage || heroImage}')` }}>
+      <section className="hero editorial-hero">
         <div className="hero-vignette"/>
         <div className="hero-content">
           <span className="eyebrow hero-kicker">ARABIAN TAILORS · EST. IN CARE</span>
@@ -114,7 +119,12 @@ export default function Home() {
           <div className="hero-actions">
             <a className="btn" href="#collection">Explore collection <ArrowRight size={15}/></a>
             <Link className="btn btn-outline" href="/customize">Design your Kandura <ArrowUpRight size={15}/></Link>
+            <Link className="hero-abaya-link" href={abayaHref}>Explore the Abaya <ArrowRight size={14}/></Link>
           </div>
+        </div>
+        <div className="hero-garments" aria-label="Standalone Abaya and Kandura garments">
+          <Link href={abayaHref} className="hero-garment hero-garment-abaya" aria-label={`Explore ${featuredAbaya?.name || 'the Abaya'}`}><GarmentVisual kind="abaya" /></Link>
+          <Link href="/customize" className="hero-garment hero-garment-kandura" aria-label="Design a Kandura"><GarmentVisual kind="kandura" /></Link>
         </div>
         <div className="hero-index"><span>01</span><i/> MADE TO MEASURE</div>
         <a className="hero-scroll" href="#collection">SCROLL TO DISCOVER <span/></a>
@@ -137,7 +147,7 @@ export default function Home() {
 
           {category === 'Custom Design' ? (
             <div className="custom-design-feature">
-              <div className="custom-feature-image" style={{ backgroundImage: `url('${heroImage}')` }}/>
+              <div className="custom-feature-image"><GarmentVisual kind="abaya" /></div>
               <div className="custom-feature-copy"><span className="eyebrow">A garment, your way</span><h3 className="serif">Begin with a blank canvas.</h3><p>Choose your silhouette, cloth, colour and fit in a guided, step-by-step experience.</p><Link className="text-link" href="/customize">Start your design <ArrowRight size={15}/></Link></div>
             </div>
           ) : (
@@ -146,7 +156,7 @@ export default function Home() {
               <div className="product-rail" ref={railRef} onScroll={updateActiveSlide}>
                 {cards.map((card) => <article className={`product-card editorial-card ${expandedCard === card.id ? 'expanded' : ''}`} key={card.id}>
                   <Link href={card.href} className="product-visual" aria-label={`View ${card.name}`}>
-                    <div className="product-img" style={{ backgroundImage: `url('${card.image}')` }}/>
+                    {card.garmentKind ? <GarmentVisual kind={card.garmentKind} className="product-garment-visual" /> : card.category.toLowerCase() === 'fabric' ? <div className="product-img fabric-visual" aria-hidden="true" /> : <div className="product-img" style={{ backgroundImage: `url('${card.image}')` }} />}
                     {card.tag && <span className="tag">{card.tag}</span>}
                     {products.find((product) => product.id === card.id)?.available === false && <span className="availability-tag">Unavailable</span>}
                     <span className="product-visual-mark"><ArrowUpRight size={16}/></span>
@@ -169,7 +179,7 @@ export default function Home() {
       </section>
 
       <section className="atelier-story">
-        <div className="story-image" style={{ backgroundImage: "url('https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?auto=format&fit=crop&w=1400&q=88')" }}><span>THE HAND OF THE ATELIER</span></div>
+        <div className="story-image"><GarmentVisual kind="kandura" className="story-garment-visual" /><span>THE HAND OF THE ATELIER</span></div>
         <div className="story-copy"><div className="eyebrow">The tailoring experience</div><h2 className="serif">A better fit<br/>begins with <i>you.</i></h2><p>Choose your silhouette, feel the cloth, and tell us how you like it to fit. Our tailors take it from there, with care at every stitch.</p><Link className="btn" href="/customize">Design your Kandura <ArrowRight size={15}/></Link><div className="story-signature">ARABIAN TAILORS <i>—</i> INDIA</div></div>
       </section>
 

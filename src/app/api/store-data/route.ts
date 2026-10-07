@@ -42,6 +42,10 @@ async function saveOrder(order: any) {
 function safePayment(order: any) {
   return {
     id: order.id, customer: order.customer, initials: order.initials, product: order.product,
+    ...(order.productId ? { productId: order.productId } : {}),
+    ...(order.productName ? { productName: order.productName } : {}),
+    ...(order.productImage ? { productImage: order.productImage } : {}),
+    ...(Number.isFinite(order.basePrice) ? { basePrice: order.basePrice } : {}),
     date: order.date, total: order.total, status: order.status, tone: order.tone,
     delivery: order.delivery, design: order.design,
     paymentMethod: ['upi','card','cod'].includes(order.paymentMethod) ? order.paymentMethod : 'Not provided',
@@ -137,12 +141,15 @@ export async function PUT(request: Request) {
 export async function POST(request: Request) {
   if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Shared storage is not connected.' }, 503);
   const order = await request.json().catch(() => null);
-  if (!order || !validText(order.id, 100) || !/^AT-[0-9]{6,}$/.test(order.id) || !validText(order.customer, 160) || !Number.isFinite(order.total) || order.total < 0 || !statuses.includes(order.status) || !validEmail(order.delivery?.email) || !validText(order.delivery?.phone, 40) || !validText(order.delivery?.address, 500) || !validText(order.delivery?.city, 100) || !validText(order.delivery?.postal, 20)) return json({ error: 'Invalid order.' }, 400);
+  if (!order || !validText(order.id, 100) || !/^AT-[0-9]{6,}$/.test(order.id) || !validText(order.customer, 160) || !validText(order.product, 240) || !Number.isFinite(order.total) || order.total < 0 || !statuses.includes(order.status) || !validEmail(order.delivery?.email) || !validText(order.delivery?.phone, 40) || !validText(order.delivery?.address, 500) || !validText(order.delivery?.city, 100) || !validText(order.delivery?.postal, 20)) return json({ error: 'Invalid order.' }, 400);
+  if (order.productId !== undefined && (!validText(order.productId, 100) || !validText(order.productName, 160) || (order.productImage !== undefined && (typeof order.productImage !== 'string' || order.productImage.length > 2000)) || !Number.isFinite(order.basePrice) || order.basePrice < 0)) return json({ error: 'Invalid product details.' }, 400);
   try {
     const clean = {
       id: order.id, customer: order.customer,
       initials: order.initials || order.customer.split(/\s+/).map((part: string) => part[0]).join('').slice(0, 2).toUpperCase(),
-      product: order.product, date: order.date || new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+      product: order.product,
+      ...(order.productId ? { productId: order.productId, productName: order.productName, productImage: order.productImage || '', basePrice: order.basePrice } : {}),
+      date: order.date || new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
       total: order.total, status: order.status, tone: order.tone || 'sand',
       statusPayment: 'Pending verification',
       paymentMethod: ['upi','card','cod'].includes(order.paymentMethod) ? order.paymentMethod : 'Not provided',
