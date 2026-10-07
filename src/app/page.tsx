@@ -6,7 +6,7 @@ import { ArrowLeft, ArrowRight, ArrowUpRight, Menu, X, ChevronLeft, ChevronRight
 import { products as catalogProducts, styles as tailoringStyles, type Product } from '@/lib/catalog';
 import { GarmentVisual } from '@/components/garment-visual';
 
-type StoreProduct = Product & { available?: boolean; stock?: number; stitchingType?: string };
+type StoreProduct = Product & { available?: boolean; stock?: number; stitchingType?: string; customizationSteps?: { id: string; title: string; description?: string; options: { id: string; name: string; priceAdjustment?: number; available?: boolean }[] }[] };
 type Category = 'All' | 'Abaya' | 'Kandura' | 'Fabrics' | 'Stitching' | 'Custom Design';
 type Card = { id: string; name: string; category: string; price: number; image: string; description: string; tag?: string; href: string; rating?: number; reviews?: number; garmentKind?: 'abaya' | 'kandura' };
 
@@ -16,7 +16,7 @@ function toCard(product: StoreProduct): Card {
   return {
     id: product.id, name: product.name, category: product.category, price: product.price,
     image: product.image, description: product.description, tag: product.tag,
-    href: category === 'kandura' ? '/customize' : category === 'abaya' ? `/customize?product=${encodeURIComponent(product.id)}` : '#collection',
+    href: category === 'kandura' ? '/customize' : category === 'abaya' || product.customizationSteps?.length ? `/customize?product=${encodeURIComponent(product.id)}` : '#collection',
     garmentKind: category === 'abaya' ? 'abaya' : category === 'kandura' ? 'kandura' : undefined,
     rating: product.rating, reviews: product.reviews,
   };
