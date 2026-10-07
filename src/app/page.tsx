@@ -1,14 +1,182 @@
 'use client';
-import Link from 'next/link';
-import {ArrowRight,ArrowUpRight,Menu,Search,ShoppingBag,UserRound,Heart,Star} from 'lucide-react';
-import {products as catalogProducts} from '@/lib/catalog';
-import {useEffect,useState} from 'react';
-export default function Home(){const [products,setProducts]=useState(catalogProducts);const [storeSettings,setStoreSettings]=useState<any>({});useEffect(()=>{let cancelled=false;fetch('/api/store-data',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(data=>{if(!cancelled&&data){if(data.products)setProducts(data.products);if(data.settings){const cfg=data.settings;setStoreSettings(cfg);if(cfg.gold)document.documentElement.style.setProperty('--gold',cfg.gold);if(cfg.background)document.body.style.backgroundColor=cfg.background}}}).catch(()=>{});return()=>{cancelled=true}},[]);return <main>
- <header className="header"><div className="wrap" style={{display:'flex',alignItems:'center',justifyContent:'space-between',width:'min(1320px,calc(100% - 48px))'}}><Link className="brand" href="/">ARABIAN <span className="gold">{storeSettings.storeName?.replace(/^ARABIAN\s*/,'')||'TAILORS'}</span></Link><nav className="desktop-links" style={{display:'flex',gap:32}}><a className="navlink" href="#shop">Shop</a><a className="navlink" href="/customize">Custom Kandura</a><a className="navlink" href="#story">Our Craft</a><Link className="navlink" href="/admin">Admin</Link></nav><div style={{display:'flex',gap:20,alignItems:'center'}}><Search size={17}/><Heart size={17} className="hide-mobile"/><ShoppingBag size={17}/><UserRound size={17} className="hide-mobile"/></div></div></header>
- <section className="hero" style={{backgroundImage:`url('${storeSettings.heroImage||'https://images.unsplash.com/photo-1617137968427-85924c800a22?auto=format&fit=crop&w=2000&q=90'}')`}}><div className="wrap hero-content"><div className="eyebrow">A modern tailoring house</div><h1 className="serif">Elegance,<br/>Tailored <i className="gold">for You.</i></h1><p>Considered craftsmanship. Personal fit. A Kandura made around the way you wear it.</p><div style={{display:'flex',gap:12,marginTop:30,flexWrap:'wrap'}}><Link className="btn" href="#shop">Shop the collection <ArrowRight size={15}/></Link><Link className="btn btn-outline" href="/customize">Create your Kandura <ArrowUpRight size={15}/></Link></div></div><div style={{position:'absolute',right:32,bottom:46,fontSize:9,letterSpacing:'.18em',color:'#e0ddd3'}}>01 <span className="gold">/</span> 03</div></section>
- <section className="section" id="shop"><div className="wrap"><div className="section-head"><div><div className="eyebrow">Made to be remembered</div><h2 className="serif">The considered edit</h2></div><a className="navlink" href="#shop">View all <ArrowRight size={13} style={{verticalAlign:'middle',marginLeft:8}}/></a></div><div className="product-grid">{products.map(p=><article key={p.id} className="product-card"><Link href={p.category?.toLowerCase()==='kandura'?'/customize':'#shop'}><div className="product-img" style={{backgroundImage:`url('${p.image}')`}}>{p.tag&&<span className="tag">{p.tag}</span>}</div></Link><div className="product-info"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span className="eyebrow" style={{fontSize:9}}>{p.category}</span><span className="subtle"><Star size={11} fill="var(--gold)" color="var(--gold)"/> {p.rating} <span style={{color:'#777'}}>({p.reviews})</span></span></div><h3>{p.name}</h3><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span className="price">₹{p.price.toLocaleString('en-IN')}</span><span className="subtle">{p.id==='kandura-signature'?'Made to measure':''}</span></div></div></article>)}</div></div></section>
- <section style={{padding:'0 0 88px'}}><div className="wrap story" id="story"><div className="story-img" style={{backgroundImage:"url('https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?auto=format&fit=crop&w=1200&q=85')"}}/><div className="story-copy"><div className="eyebrow">The tailoring experience</div><h2 className="serif">A better fit<br/>begins with <i className="gold">you.</i></h2><p className="subtle" style={{maxWidth:380,fontSize:13,marginBottom:24}}>Choose your silhouette, feel the cloth, and tell us how you like it to fit. Our tailors take it from there.</p><Link className="btn" href="/customize" style={{width:'fit-content'}}>Design your Kandura <ArrowRight size={15}/></Link></div></div></section>
- <section className="section" style={{paddingTop:8}}><div className="wrap"><div style={{textAlign:'center',marginBottom:32}}><div className="eyebrow">From selection to stitch</div><h2 className="serif" style={{fontSize:40,fontWeight:400}}>Crafted around your style.</h2></div><div className="steps"><div className="step"><b>01 — CHOOSE</b><h3>Your silhouette</h3><p className="subtle">Explore tailoring traditions with a modern point of view.</p></div><div className="step"><b>02 — MAKE IT YOURS</b><h3>Cloth, colour, fit</h3><p className="subtle">Select the fabric and colour. Choose a standard or custom fit.</p></div><div className="step"><b>03 — MADE FOR YOU</b><h3>Tailored with care</h3><p className="subtle">Your design is reviewed by our tailoring team before it begins.</p></div></div></div></section>
- <footer className="footer"><div className="wrap" style={{display:'flex',justifyContent:'space-between',flexWrap:'wrap',gap:20}}><span>© 2026 ARABIAN TAILORS</span><span className="brand" style={{fontSize:11}}>ELEGANCE, TAILORED FOR YOU</span><span>India · INR</span></div></footer><nav className="bottomnav"><a href="#shop">Discover</a><Link href="/customize">Custom</Link><a href="#shop">Wishlist</a><a href="#">Account</a></nav>
- </main>}
 
+import Link from 'next/link';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Menu, X, ChevronLeft, ChevronRight, Plus, Minus, Star } from 'lucide-react';
+import { products as catalogProducts, styles as tailoringStyles, type Product } from '@/lib/catalog';
+
+type StoreProduct = Product & { available?: boolean; stock?: number; stitchingType?: string };
+type Category = 'All' | 'Kandura' | 'Fabrics' | 'Stitching' | 'Custom Design';
+type Card = { id: string; name: string; category: string; price: number; image: string; description: string; tag?: string; href: string; rating?: number; reviews?: number };
+
+const categories: Category[] = ['All', 'Kandura', 'Fabrics', 'Stitching', 'Custom Design'];
+const heroImage = 'https://images.unsplash.com/photo-1617137968427-85924c800a22?auto=format&fit=crop&w=2200&q=90';
+function toCard(product: StoreProduct): Card {
+  return {
+    id: product.id, name: product.name, category: product.category, price: product.price,
+    image: product.image, description: product.description, tag: product.tag,
+    href: product.category.toLowerCase() === 'kandura' ? '/customize' : '#collection',
+    rating: product.rating, reviews: product.reviews,
+  };
+}
+
+export default function Home() {
+  const [products, setProducts] = useState<StoreProduct[]>(catalogProducts);
+  const [storeSettings, setStoreSettings] = useState<Record<string, string>>({});
+  const [category, setCategory] = useState<Category>('All');
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  const [mobileMenu, setMobileMenu] = useState(false);
+  const [activeSlide, setActiveSlide] = useState(0);
+  const railRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/store-data', { cache: 'no-store' })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (cancelled || !data) return;
+        if (Array.isArray(data.products)) setProducts(data.products);
+        if (data.settings) {
+          const settings = data.settings as Record<string, string>;
+          setStoreSettings(settings);
+          if (settings.gold) document.documentElement.style.setProperty('--gold', settings.gold);
+          if (settings.background) document.documentElement.style.setProperty('--ink', settings.background);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const cards = useMemo<Card[]>(() => {
+    const inStock = (product: StoreProduct) => product.available !== false;
+    if (category === 'Kandura') return products.filter((product) => inStock(product) && product.category.toLowerCase() === 'kandura').map(toCard);
+    if (category === 'Fabrics') return products.filter((product) => inStock(product) && product.category.toLowerCase() === 'fabric').map(toCard);
+    if (category === 'Stitching') {
+      const serviceProducts = products.filter((product) => inStock(product) && product.category.toLowerCase() === 'kandura');
+      if (serviceProducts.length) return serviceProducts.map((product) => ({
+        ...toCard(product), category: 'Stitching',
+        name: product.stitchingType ? `${product.stitchingType} tailoring` : product.name,
+      }));
+      return tailoringStyles.map((style) => ({
+        id: `stitching-${style.id}`, name: `${style.name} tailoring`, category: 'Stitching', price: style.price,
+        image: style.image, description: style.desc, href: '/customize',
+      }));
+    }
+    if (category === 'Custom Design') return [];
+    return products.map(toCard);
+  }, [category, products]);
+
+  function moveCarousel(direction: -1 | 1) {
+    const rail = railRef.current;
+    if (!rail) return;
+    rail.scrollBy({ left: direction * Math.max(rail.clientWidth * 0.78, 280), behavior: 'smooth' });
+  }
+
+  function updateActiveSlide() {
+    const rail = railRef.current;
+    const firstCard = rail?.firstElementChild as HTMLElement | null;
+    if (!rail || !firstCard) { setActiveSlide(0); return; }
+    const gap = Number.parseFloat(getComputedStyle(rail).columnGap || '0');
+    setActiveSlide(Math.round(rail.scrollLeft / (firstCard.offsetWidth + gap)));
+  }
+
+  useEffect(() => {
+    if (railRef.current) railRef.current.scrollTo({ left: 0 });
+    setActiveSlide(0);
+    setExpandedCard(null);
+  }, [category]);
+
+  return (
+    <main className="storefront">
+      <header className="header editorial-header">
+        <div className="header-inner">
+          <Link className="brand" href="/" aria-label="Arabian Tailors home">ARABIAN <span className="gold">{storeSettings.storeName?.replace(/^ARABIAN\s*/i, '') || 'TAILORS'}</span></Link>
+          <nav className={`desktop-links ${mobileMenu ? 'is-open' : ''}`} aria-label="Main navigation">
+            <a className="navlink" href="#collection" onClick={() => setMobileMenu(false)}>Collection</a>
+            <Link className="navlink" href="/customize" onClick={() => setMobileMenu(false)}>Custom Kandura</Link>
+            <a className="navlink" href="#craft" onClick={() => setMobileMenu(false)}>Our craft</a>
+          </nav>
+          <div className="header-actions">
+            <Link className="header-appointment" href="/customize">Book a fitting <ArrowUpRight size={14}/></Link>
+            <button className="mobile-menu-toggle" onClick={() => setMobileMenu((open) => !open)} aria-label={mobileMenu ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileMenu}>
+              {mobileMenu ? <X size={19}/> : <Menu size={19}/>}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section className="hero editorial-hero" style={{ backgroundImage: `url('${storeSettings.heroImage || heroImage}')` }}>
+        <div className="hero-vignette"/>
+        <div className="hero-content">
+          <span className="eyebrow hero-kicker">ARABIAN TAILORS · EST. IN CARE</span>
+          <h1 className="serif">Tailoring,<br/><i>Refined.</i></h1>
+          <p>Precision-crafted kanduras and traditional garments, tailored to your measurements and your style.</p>
+          <div className="hero-actions">
+            <a className="btn" href="#collection">Explore collection <ArrowRight size={15}/></a>
+            <Link className="btn btn-outline" href="/customize">Design your Kandura <ArrowUpRight size={15}/></Link>
+          </div>
+        </div>
+        <div className="hero-index"><span>01</span><i/> MADE TO MEASURE</div>
+        <a className="hero-scroll" href="#collection">SCROLL TO DISCOVER <span/></a>
+      </section>
+
+      <section className="craft-note" id="craft">
+        <p>Quiet confidence, cut to your measure.</p>
+        <span>DESIGNED WITH INTENTION <i>·</i> MADE BY HAND</span>
+      </section>
+
+      <section className="section collection-section" id="collection">
+        <div className="section-shell">
+          <div className="collection-heading">
+            <div><div className="eyebrow">The atelier edit</div><h2 className="serif">Made to <i>be yours.</i></h2></div>
+            <p>Explore considered cloth, silhouettes and finishing. Each piece begins with a conversation.</p>
+          </div>
+          <div className="category-strip" role="tablist" aria-label="Shop categories">
+            {categories.map((item) => <button key={item} role="tab" aria-selected={category === item} className={`category-tab ${category === item ? 'active' : ''}`} onClick={() => setCategory(item)}>{item}<span/></button>)}
+          </div>
+
+          {category === 'Custom Design' ? (
+            <div className="custom-design-feature">
+              <div className="custom-feature-image" style={{ backgroundImage: `url('${heroImage}')` }}/>
+              <div className="custom-feature-copy"><span className="eyebrow">A garment, your way</span><h3 className="serif">Begin with a blank canvas.</h3><p>Choose your silhouette, cloth, colour and fit in a guided, step-by-step experience.</p><Link className="text-link" href="/customize">Start your design <ArrowRight size={15}/></Link></div>
+            </div>
+          ) : (
+            <>
+              <div className="carousel-tools"><span className="carousel-caption">{String(activeSlide + 1).padStart(2, '0')} <i>/</i> {String(cards.length).padStart(2, '0')} PIECES</span><div><button onClick={() => moveCarousel(-1)} aria-label="Previous pieces"><ChevronLeft size={17}/></button><button onClick={() => moveCarousel(1)} aria-label="Next pieces"><ChevronRight size={17}/></button></div></div>
+              <div className="product-rail" ref={railRef} onScroll={updateActiveSlide}>
+                {cards.map((card) => <article className={`product-card editorial-card ${expandedCard === card.id ? 'expanded' : ''}`} key={card.id}>
+                  <Link href={card.href} className="product-visual" aria-label={`View ${card.name}`}>
+                    <div className="product-img" style={{ backgroundImage: `url('${card.image}')` }}/>
+                    {card.tag && <span className="tag">{card.tag}</span>}
+                    {products.find((product) => product.id === card.id)?.available === false && <span className="availability-tag">Unavailable</span>}
+                    <span className="product-visual-mark"><ArrowUpRight size={16}/></span>
+                  </Link>
+                  <div className="product-info">
+                    <div className="product-meta"><span>{card.category}</span>{card.rating && <span><Star size={11} fill="var(--gold)"/> {card.rating} <i>({card.reviews})</i></span>}</div>
+                    <Link href={card.href}><h3>{card.name}</h3></Link>
+                    <div className="product-price-row"><span className="price">₹{card.price.toLocaleString('en-IN')}</span><span className="made-note">{products.find((product) => product.id === card.id)?.available === false ? 'CURRENTLY UNAVAILABLE' : 'MADE TO ORDER'}</span></div>
+                    <button className="card-expand" aria-expanded={expandedCard === card.id} onClick={() => setExpandedCard(expandedCard === card.id ? null : card.id)}>{expandedCard === card.id ? 'Less detail' : 'Discover details'}{expandedCard === card.id ? <Minus size={13}/> : <Plus size={13}/>}</button>
+                    {expandedCard === card.id && <div className="card-detail"><p>{card.description}</p><Link href={card.href}>Explore this piece <ArrowRight size={13}/></Link></div>}
+                  </div>
+                </article>)}
+                {!cards.length && <div className="empty-collection">No pieces in this edit yet. <Link href="/customize">Create a custom design <ArrowRight size={14}/></Link></div>}
+              </div>
+              {cards.length > 1 && <div className="carousel-dots" aria-label="Carousel position">{cards.map((card, index) => <button key={card.id} className={index === activeSlide ? 'active' : ''} onClick={() => railRef.current?.children[index]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })} aria-label={`Show piece ${index + 1}`}/>)}</div>}
+            </>
+          )}
+          <div className="collection-bottom"><span>A considered wardrobe. A personal fit.</span><Link className="text-link" href="/customize">Visit the configurator <ArrowRight size={14}/></Link></div>
+        </div>
+      </section>
+
+      <section className="atelier-story">
+        <div className="story-image" style={{ backgroundImage: "url('https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?auto=format&fit=crop&w=1400&q=88')" }}><span>THE HAND OF THE ATELIER</span></div>
+        <div className="story-copy"><div className="eyebrow">The tailoring experience</div><h2 className="serif">A better fit<br/>begins with <i>you.</i></h2><p>Choose your silhouette, feel the cloth, and tell us how you like it to fit. Our tailors take it from there, with care at every stitch.</p><Link className="btn" href="/customize">Design your Kandura <ArrowRight size={15}/></Link><div className="story-signature">ARABIAN TAILORS <i>—</i> INDIA</div></div>
+      </section>
+
+      <section className="process-section"><div className="section-shell"><div className="process-heading"><div className="eyebrow">From selection to stitch</div><h2 className="serif">Crafted around your <i>style.</i></h2></div><div className="process-grid"><article><span>01</span><h3>Choose a silhouette</h3><p>Explore tailoring traditions with a modern point of view.</p></article><article><span>02</span><h3>Make it yours</h3><p>Select cloth, colour and the fit that feels right to you.</p></article><article><span>03</span><h3>Made with care</h3><p>Your design is reviewed by our tailoring team before work begins.</p></article></div></div></section>
+
+      <footer className="footer editorial-footer"><div className="section-shell"><Link className="brand" href="/">ARABIAN <span className="gold">TAILORS</span></Link><span>© 2026 ARABIAN TAILORS <i>·</i> INDIA</span><a href="#top" onClick={(event) => { event.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>BACK TO TOP <ArrowLeft size={12}/></a></div></footer>
+      <nav className="bottomnav" aria-label="Quick navigation"><a href="#collection">Discover</a><Link href="/customize">Custom</Link><a href="#craft">Our craft</a></nav>
+    </main>
+  );
+}
