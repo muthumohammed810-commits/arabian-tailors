@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, Check, ShieldCheck, Scissors, CreditCard, Smartp
 import { fabrics as defaultFabrics, products as defaultProducts, styles as defaultStyles, type Product } from '@/lib/catalog';
 import { GarmentVisual } from '@/components/garment-visual';
 import { createUpiPaymentUrl } from '@/lib/upi-payment';
+import { customizationDefaults, defaultMeasurements } from '@/lib/customization-defaults';
 
 type CustomizationOption = { id: string; name: string; description?: string; image?: string; priceAdjustment?: number; available?: boolean; visible?: boolean };
 type CustomizationStep = { id: string; title: string; description?: string; required?: boolean; available?: boolean; options: CustomizationOption[] };
@@ -13,9 +14,24 @@ type MeasurementField = { id: string; name: string; unit: 'cm' | 'inch'; require
 type StoreProduct = Product & { images?: string[]; available?: boolean; options?: string[]; customizationSteps?: CustomizationStep[]; measurements?: MeasurementField[]; measurementsEnabled?: boolean; stitchingType?: string; stock?: number };
 type TailoringStyle = { id: string; name: string; desc: string; price: number; image: string };
 type Fabric = { name: string; quality: string; price: number; available: boolean; swatch: string };
-
 const colors = [{ name: 'Ivory', hex: '#eee9dc' }, { name: 'Pure White', hex: '#f8f7f2' }, { name: 'Sand', hex: '#d1c3a3' }, { name: 'Midnight', hex: '#202326' }, { name: 'Slate', hex: '#777b80' }];
 const sizes = ['S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+
+function initialShopProducts(): StoreProduct[] {
+  return defaultProducts.map((product) => {
+    const category = product.category.toLowerCase();
+    const garment = category === 'kandura' || category === 'abaya' ? category : undefined;
+    if (!garment) return { ...product, available: true, options: [] };
+    const customizationSteps = customizationDefaults[garment].map((step, stepIndex) => ({
+      ...step,
+      id: `default-${product.id}-step-${stepIndex + 1}`,
+      available: step.available !== false,
+      options: step.options.map((option, optionIndex) => ({ ...option, id: `default-${product.id}-step-${stepIndex + 1}-option-${optionIndex + 1}` })),
+    }));
+    const measurements = defaultMeasurements[garment].map((field, index) => ({ ...field, id: `default-${product.id}-measurement-${index + 1}` }));
+    return { ...product, available: true, options: [], customizationSteps, measurements, measurementsEnabled: true };
+  });
+}
 
 function CustomOptionImage({ src, name, colorStep }: { src?: string; name: string; colorStep: boolean }) {
   const [failed, setFailed] = useState(false);
@@ -25,7 +41,7 @@ function CustomOptionImage({ src, name, colorStep }: { src?: string; name: strin
 
 export default function Customize() {
   const [step, setStep] = useState(0);
-  const [style, setStyle] = useState(defaultStyles[0].id);
+  const [style, setStyle] = useState(defaultProducts.find((product) => product.category.toLowerCase() === 'kandura')?.id || defaultStyles[0].id);
   const [fabric, setFabric] = useState(0);
   const [color, setColor] = useState('Ivory');
   const [sizing, setSizing] = useState('standard');
@@ -46,7 +62,7 @@ export default function Customize() {
   const [paySettings, setPaySettings] = useState<Record<string, string>>({});
   const [serviceStyles, setServiceStyles] = useState<TailoringStyle[]>(defaultStyles);
   const [serviceFabrics, setServiceFabrics] = useState<Fabric[]>(defaultFabrics);
-  const [shopProducts, setShopProducts] = useState<StoreProduct[]>(defaultProducts.map((product) => ({ ...product, available: true, options: [] })));
+  const [shopProducts, setShopProducts] = useState<StoreProduct[]>(initialShopProducts);
   const [requestedProductId, setRequestedProductId] = useState<string | null>(null);
   const [selectedProductOption, setSelectedProductOption] = useState('');
   const [customSelections, setCustomSelections] = useState<Record<string, CustomizationOption>>({});
@@ -103,8 +119,10 @@ export default function Customize() {
   const activeCustomOption = activeCustomStep ? customSelections[activeCustomStep.id] : undefined;
   const measurementTitle = activeCustomStep?.title.toLowerCase() || '';
   const needsCustomMeasurements = Boolean(activeCustomStep && /custom/i.test(activeCustomOption?.name || '') && /fit|size|length|sleeve|measurement/.test(measurementTitle));
-  const activeMeasurementKeys: ('chest'|'shoulder'|'sleeve'|'length')[] = !needsCustomMeasurements ? [] : measurementTitle.includes('length') ? ['length'] : measurementTitle.includes('sleeve') ? ['sleeve'] : ['chest','shoulder','sleeve','length'];
-  const missingCustomMeasurements = activeMeasurementKeys.some(key => !measurements[key].trim()) || (showMeasurements && step === measurementStep && measurementFields.some(field => field.required === true && !measurements[field.id]?.trim()));
+  const customOptionMeasurements = needsCustomMeasurements
+    ? configuredProduct ? (showMeasurements ? measurementFields : []) : (['chest', 'shoulder', 'sleeve', 'length'] as const).map(name => ({ id: name, name, unit: unit as 'cm'|'inch', required: true }))
+    : [];
+  const missingCustomMeasurements = customOptionMeasurements.some(field => field.required === true && !measurements[field.id]?.trim()) || (showMeasurements && step === measurementStep && measurementFields.some(field => field.required === true && !measurements[field.id]?.trim()));
   const selectedOptionTotal = customSteps.reduce((total, item) => total + (customSelections[item.id]?.priceAdjustment || 0), 0);
   const currentStyle = serviceStyles.find((item) => item.id === style) || serviceStyles[0] || defaultStyles[0];
   const currentFabric = serviceFabrics[fabric] || serviceFabrics[0] || defaultFabrics[0];
@@ -239,7 +257,7 @@ export default function Customize() {
 
             {hasGarmentDefaults && step === 1 && <><h2 className="serif customizer-step-title">Choose the cloth</h2><p className="subtle">Consider the hand, weight and way it falls.</p>{serviceFabrics.map((item, index) => <button key={item.name} disabled={!item.available} className={`fabric-choice ${index === fabric ? 'selected' : ''}`} onClick={() => setFabric(index)}><span className="fabric-swatch" style={{ background: item.swatch }} /><span className="fabric-choice-copy"><b className="serif">{item.name}</b><span className="subtle">{item.quality} · {item.available ? 'Available' : 'Unavailable'}</span></span><span>₹{item.price.toLocaleString('en-IN')}</span></button>)}</>}
 
-            {activeCustomStep && (() => { const item = activeCustomStep; const chosen = customSelections[item.id]; const colorStep = /colou?r/i.test(item.title); const visibleOptions = item.options.filter(option=>option.visible!==false); return <>{hasModelStep&&step===0&&configuredProduct?.images?.length?<div className="product-image-gallery">{configuredProduct.images.map((image,index)=><img key={`${image}-${index}`} src={image} alt={`${configuredProduct.name} image ${index+1}`}/>)}</div>:null}<h2 className="serif customizer-step-title">{item.title}</h2><p className="subtle">{item.required===true?'Required selection':'Optional selection'}{item.description?` · ${item.description}`:''}</p><div className="dynamic-option-list">{visibleOptions.map(option=><button type="button" key={option.id} disabled={option.available===false} className={`dynamic-option-choice ${chosen?.id===option.id?'selected':''} ${option.available===false?'unavailable':''}`} aria-pressed={chosen?.id===option.id} onClick={()=>setCustomSelections(previous=>({...previous,[item.id]:option}))}><CustomOptionImage src={option.image} name={option.name} colorStep={colorStep}/><span className="dynamic-option-copy"><b>{option.name}</b>{option.description&&<small className="subtle">{option.description}</small>}{option.available===false&&<small className="subtle">Currently unavailable</small>}</span><b>{(option.priceAdjustment||0)>0?`+ ₹${option.priceAdjustment!.toLocaleString('en-IN')}`:(option.priceAdjustment||0)<0?`− ₹${Math.abs(option.priceAdjustment!).toLocaleString('en-IN')}`:'Included'}</b></button>)}{!visibleOptions.length&&<p className="subtle">No options are currently shown. Please contact the atelier.</p>}</div>{needsCustomMeasurements&&<><p className="subtle">Enter your measurements for this custom selection.</p><div className="measurement-grid">{activeMeasurementKeys.map(key=><label className="subtle" key={key}>{key}<input type="number" min="1" value={measurements[key]} onChange={event=>setMeasurements(previous=>({...previous,[key]:event.target.value}))} placeholder="Measurement"/></label>)}<label className="subtle">Unit<select value={unit} onChange={event=>setUnit(event.target.value)}><option>cm</option><option>inch</option></select></label></div></>}</>; })()}
+            {activeCustomStep && (() => { const item = activeCustomStep; const chosen = customSelections[item.id]; const colorStep = /colou?r/i.test(item.title); const visibleOptions = item.options.filter(option=>option.visible!==false); return <>{hasModelStep&&step===0&&configuredProduct?.images?.length?<div className="product-image-gallery">{configuredProduct.images.map((image,index)=><img key={`${image}-${index}`} src={image} alt={`${configuredProduct.name} image ${index+1}`}/>)}</div>:null}<h2 className="serif customizer-step-title">{item.title}</h2><p className="subtle">{item.required===true?'Required selection':'Optional selection'}{item.description?` · ${item.description}`:''}</p><div className="dynamic-option-list">{visibleOptions.map(option=><button type="button" key={option.id} disabled={option.available===false} className={`dynamic-option-choice ${chosen?.id===option.id?'selected':''} ${option.available===false?'unavailable':''}`} aria-pressed={chosen?.id===option.id} onClick={()=>setCustomSelections(previous=>({...previous,[item.id]:option}))}><CustomOptionImage src={option.image} name={option.name} colorStep={colorStep}/><span className="dynamic-option-copy"><b>{option.name}</b>{option.description&&<small className="subtle">{option.description}</small>}{option.available===false&&<small className="subtle">Currently unavailable</small>}</span><b>{(option.priceAdjustment||0)>0?`+ ₹${option.priceAdjustment!.toLocaleString('en-IN')}`:(option.priceAdjustment||0)<0?`− ₹${Math.abs(option.priceAdjustment!).toLocaleString('en-IN')}`:'Included'}</b></button>)}{!visibleOptions.length&&<p className="subtle">No options are currently shown. Please contact the atelier.</p>}</div>{needsCustomMeasurements&&customOptionMeasurements.length>0&&<><p className="subtle">Enter your measurements for this custom selection.</p><div className="measurement-grid">{customOptionMeasurements.map(field=><label className="subtle" key={field.id}>{field.name}{field.required===true?' *':''}<input type="number" min="0" value={measurements[field.id]||''} onChange={event=>setMeasurements(previous=>({...previous,[field.id]:event.target.value}))} placeholder={field.unit}/></label>)}<label className="subtle">Unit<select value={unit} onChange={event=>setUnit(event.target.value)}><option>cm</option><option>inch</option></select></label></div></>}</>; })()}
 
             {hasGarmentDefaults && step === 2 && <><h2 className="serif customizer-step-title">Choose your colour</h2><p className="subtle">A considered palette, chosen to wear beautifully.</p><div className="color-choices">{colors.map((item) => <button key={item.name} onClick={() => setColor(item.name)} aria-label={item.name} aria-pressed={color === item.name} title={item.name}><span style={{ background: item.hex, borderColor: color === item.name ? 'var(--gold)' : '#555' }} /><small className="subtle">{item.name}</small></button>)}</div></>}
 

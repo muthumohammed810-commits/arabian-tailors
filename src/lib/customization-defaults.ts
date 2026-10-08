@@ -8,25 +8,18 @@ const productionOptions = (): CustomizationDefaultOption[] => [
   { name: 'Express', priceAdjustment: 350, available: true },
   { name: 'Premium Express', priceAdjustment: 0, available: true },
 ];
+const priorityOptions = (): CustomizationDefaultOption[] => [
+  { name: 'Standard tailoring', priceAdjustment: 0, available: true },
+  { name: 'Priority tailoring', priceAdjustment: 350, available: true },
+];
 
 export const customizationDefaults: Record<'kandura' | 'abaya', CustomizationDefaultStep[]> = {
   kandura: [
     { title: 'Choose Your Kandura Model', required: true, options: options(['Saudi Kandura', 'Emirati Kandura', 'Omani Kandura', 'Kuwaiti Kandura', 'Qatari Kandura', 'Bahraini Kandura', 'Indian Kandura', 'Moroccan Kandura', 'Custom Model']) },
-    { title: 'Fabric', required: true, options: options(['Cotton', 'Premium Cotton', 'Linen', 'Polyester', 'Wool Blend', 'Silk Blend', 'Premium Fabric', 'Custom Fabric']) },
-    { title: 'Color', required: true, options: options(['White', 'Off White', 'Cream', 'Ivory', 'Beige', 'Black', 'Navy', 'Grey', 'Brown', 'Custom Color']) },
-    { title: 'Collar Style', required: true, options: options(['Standard', 'Emirati', 'Mandarin', 'Round', 'Hidden', 'Custom']) },
-    { title: 'Cuff Style', required: true, options: options(['Standard', 'Button Cuff', 'French Cuff', 'Folded Cuff', 'Custom']) },
-    { title: 'Front / Placket Style', required: true, options: options(['Standard', 'Hidden', 'Button', 'Zip', 'Premium', 'Custom']) },
-    { title: 'Pocket Style', required: true, options: options(['No Pocket', 'Side Pocket', 'Chest Pocket', 'Double Pocket', 'Hidden Pocket', 'Custom']) },
-    { title: 'Buttons', required: true, options: options(['Standard', 'Premium', 'Pearl', 'Metal', 'Gold', 'Silver', 'Custom']) },
-    { title: 'Embroidery', required: true, options: options(['None', 'Simple', 'Premium', 'Royal', 'Custom']) },
-    { title: 'Stitching', required: true, options: options(['Standard', 'Premium', 'Hand Finish', 'Luxury Finish', 'Custom']) },
-    { title: 'Fit', required: true, options: options(['Regular', 'Slim', 'Relaxed', 'Loose', 'Custom']) },
-    { title: 'Length', required: true, options: options(['Standard', 'Short', 'Long', 'Custom Measurement']) },
-    { title: 'Sleeve', required: true, options: options(['Standard', 'Long', 'Short', 'Custom']) },
-    { title: 'Name / Personalization', required: true, options: options(['No Personalization', 'Name Embroidery', 'Initials', 'Custom Text']) },
-    { title: 'Size', required: true, options: options(['S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'Custom Measurements']) },
-    { title: 'Delivery / Production', required: true, options: productionOptions() },
+    { title: 'Choose Size', required: true, options: options(['S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'Custom Size']) },
+    { title: 'Choose Color', required: true, options: options(['White', 'Black', 'Cream', 'Beige']) },
+    { title: 'Choose Fabric / Cloth Type', required: true, options: options(['Cotton', 'Linen', 'Premium']) },
+    { title: 'Priority / Extra customization', required: false, options: priorityOptions() },
   ],
   abaya: [
     { title: 'Abaya Style', required: true, options: options(['Classic', 'Open Front', 'Closed Front', 'Kimono', 'Butterfly', 'A-Line', 'Dubai', 'Saudi', 'Emirati', 'Custom']) },
@@ -57,12 +50,34 @@ export const defaultMeasurements: Record<'kandura' | 'abaya', DefaultMeasurement
 type StoreForCustomizationMerge = { products: any[] };
 const normalizedChoice = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
 const stepAliases: Record<string, string[]> = {
-  'choose your kandura model': ['kandura style', 'style', 'choose kandura model'], 'kandura style': ['style'], 'abaya style': ['style'], color: ['colour'], 'collar style': ['collar'], 'cuff style': ['cuff'], cuff: ['cuff style'],
+  'choose your kandura model': ['kandura style', 'style', 'choose kandura model'], 'kandura style': ['style'], 'abaya style': ['style'], color: ['colour', 'choose colour', 'choose color'], 'choose color': ['color', 'colour', 'choose colour'], 'choose size': ['size', 'sizing', 'size selection'], 'choose fabric cloth type': ['fabric', 'cloth', 'cloth type', 'choose fabric', 'fabric cloth type'], 'priority extra customization': ['priority', 'extra', 'extras', 'priority tailoring', 'delivery production', 'production delivery'], 'collar style': ['collar'], 'cuff style': ['cuff'], cuff: ['cuff style'],
   'front placket style': ['front style', 'placket', 'placket style', 'front placket'], 'front style': ['front placket style', 'placket', 'placket style'], 'pocket style': ['pocket'], pocket: ['pocket style'],
   buttons: ['button style'], 'name personalization': ['personalization', 'name', 'name embroidery'],
   'delivery production': ['production delivery', 'delivery', 'production'], 'production delivery': ['delivery production', 'delivery', 'production'],
   'sleeve style': ['sleeve'], 'hijab option': ['hijab'], 'custom measurements': ['measurements'],
 };
+
+const legacyGeneratedKanduraSteps: Record<string, string[]> = {
+  'collar style': ['standard', 'emirati', 'mandarin', 'round', 'hidden', 'custom'],
+  'cuff style': ['standard', 'button cuff', 'french cuff', 'folded cuff', 'custom'],
+  'front placket style': ['standard', 'hidden', 'button', 'zip', 'premium', 'custom'],
+  'pocket style': ['no pocket', 'side pocket', 'chest pocket', 'double pocket', 'hidden pocket', 'custom'],
+  buttons: ['standard', 'premium', 'pearl', 'metal', 'gold', 'silver', 'custom'],
+  embroidery: ['none', 'simple', 'premium', 'royal', 'custom'],
+  stitching: ['standard', 'premium', 'hand finish', 'luxury finish', 'custom'],
+  fit: ['regular', 'slim', 'relaxed', 'loose', 'custom'],
+  length: ['standard', 'short', 'long', 'custom measurement'],
+  sleeve: ['standard', 'long', 'short', 'custom'],
+  'name personalization': ['no personalization', 'name embroidery', 'initials', 'custom text'],
+};
+
+function isUntouchedGeneratedStep(step: any, names: string[]) {
+  if (!Array.isArray(step.options) || step.options.length !== names.length || step.description || step.required !== true) return false;
+  return step.options.every((option: any, index: number) => {
+    if (!option || normalizedChoice(String(option.name || '')) !== normalizedChoice(names[index])) return false;
+    return !option.description && !option.image && Number(option.priceAdjustment || 0) === 0 && option.available !== false && option.visible !== false;
+  });
+}
 
 function customizationStepMatches(existingTitle: string, defaultTitle: string) {
   const existing = normalizedChoice(existingTitle), target = normalizedChoice(defaultTitle);
@@ -73,6 +88,46 @@ const normalizedModel = (value: string) => {
   const normalized = normalizedChoice(value);
   return normalized === 'custom' || normalized === 'custom model' ? 'custom model' : normalized.replace(/ kandura$/, '');
 };
+
+function migrateKanduraMainSteps(product: any) {
+  const steps: any[] = product.customizationSteps;
+  let changed = false;
+  const mainSteps = customizationDefaults.kandura;
+  const ordered: any[] = [];
+
+  for (const template of mainSteps) {
+    let step = steps.find((candidate: any) => candidate && typeof candidate.title === 'string' && customizationStepMatches(candidate.title, template.title));
+    if (!step) {
+      const slug = normalizedChoice(template.title).replaceAll(' ', '-');
+      const baseId = `custom-${String(product.id).slice(-32)}-${slug.slice(0, 32)}`;
+      let id = baseId, suffix = 2;
+      while (steps.some((candidate: any) => candidate?.id === id)) id = `${baseId}-${suffix++}`;
+      step = { id, title: template.title, description: '', required: template.required, available: true,
+        options: template.options.map((option, index) => ({ id: `opt-${slug.slice(0, 22)}-${index + 1}`, ...option })) };
+      steps.push(step);
+      changed = true;
+    } else {
+      if (step.title !== template.title) { step.title = template.title; changed = true; }
+      if (step.available === undefined) { step.available = true; changed = true; }
+      if (template.title === 'Priority / Extra customization' && step.required !== false) { step.required = false; changed = true; }
+    }
+    ordered.push(step);
+  }
+
+  for (const step of steps) {
+    if (ordered.includes(step)) continue;
+    const oldOptions = legacyGeneratedKanduraSteps[normalizedChoice(String(step.title || ''))];
+    if (step.available !== false && oldOptions && isUntouchedGeneratedStep(step, oldOptions)) {
+      step.available = false;
+      changed = true;
+    }
+  }
+
+  const next = [...ordered, ...steps.filter((step: any) => !ordered.includes(step))];
+  if (next.some((step, index) => step !== steps[index])) changed = true;
+  product.customizationSteps = next;
+  return changed;
+}
 
 /** Adds missing defaults in place while retaining existing step/option records and prices. */
 export function addDefaultCustomization(store: StoreForCustomizationMerge) {
@@ -98,19 +153,7 @@ export function addDefaultCustomization(store: StoreForCustomizationMerge) {
         product.measurements.push({ id, ...field });
         changed = true;
       }
-      if (garment === 'kandura') {
-        const modelStep = product.customizationSteps.find((candidate: any) => candidate && typeof candidate.title === 'string' && customizationStepMatches(candidate.title, 'Choose Your Kandura Model'));
-        if (modelStep) {
-          if (modelStep.title !== 'Choose Your Kandura Model') { modelStep.title = 'Choose Your Kandura Model'; changed = true; }
-          for (const option of modelStep.options || []) {
-            const label = typeof option.name === 'string' ? option.name : '';
-            const target = customizationDefaults.kandura[0].options.find(item => normalizedModel(item.name) === normalizedModel(label));
-            if (target && label !== target.name) { option.name = target.name; changed = true; }
-          }
-          const modelIndex = product.customizationSteps.indexOf(modelStep);
-          if (modelIndex > 0) { product.customizationSteps.splice(modelIndex, 1); product.customizationSteps.unshift(modelStep); changed = true; }
-        }
-      }
+      if (garment === 'kandura') changed = migrateKanduraMainSteps(product) || changed;
       continue;
     }
     if (!Array.isArray(product.customizationSteps)) product.customizationSteps = [];
