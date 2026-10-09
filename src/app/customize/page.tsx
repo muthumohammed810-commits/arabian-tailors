@@ -8,7 +8,7 @@ import { GarmentVisual } from '@/components/garment-visual';
 import { createUpiPaymentUrl } from '@/lib/upi-payment';
 import { customizationDefaults, defaultMeasurements } from '@/lib/customization-defaults';
 
-type CustomizationOption = { id: string; name: string; description?: string; image?: string; images?: string[]; priceAdjustment?: number; available?: boolean; visible?: boolean };
+type CustomizationOption = { id: string; name: string; description?: string; image?: string; images?: string[]; swatch?: string; priceAdjustment?: number; available?: boolean; visible?: boolean };
 type CustomizationStep = { id: string; title: string; description?: string; required?: boolean; available?: boolean; options: CustomizationOption[] };
 type MeasurementField = { id: string; name: string; unit: 'cm' | 'inch'; required?: boolean; available?: boolean };
 type StoreProduct = Product & { images?: string[]; available?: boolean; options?: string[]; customizationSteps?: CustomizationStep[]; measurements?: MeasurementField[]; measurementsEnabled?: boolean; stitchingType?: string; stock?: number };
@@ -16,6 +16,14 @@ type TailoringStyle = { id: string; name: string; desc: string; price: number; i
 type Fabric = { name: string; quality: string; price: number; available: boolean; swatch: string };
 const colors = [{ name: 'Ivory', hex: '#eee9dc' }, { name: 'Pure White', hex: '#f8f7f2' }, { name: 'Sand', hex: '#d1c3a3' }, { name: 'Midnight', hex: '#202326' }, { name: 'Slate', hex: '#777b80' }];
 const sizes = ['S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+const namedColorSwatches: Record<string, string> = { white: '#f8f7f2', 'off white': '#f3f0e7', 'pure white': '#f8f7f2', cream: '#eee5d1', ivory: '#eee9dc', beige: '#d8c7a5', sand: '#d1c3a3', black: '#171817', navy: '#202b3d', midnight: '#202326', grey: '#858585', gray: '#858585', slate: '#777b80', brown: '#76543b', charcoal: '#454545', taupe: '#9a8976' };
+
+function getOptionSwatch(option: CustomizationOption) {
+  if (option.swatch && /^#[0-9a-f]{6}$/i.test(option.swatch)) return option.swatch;
+  const name = option.name.toLowerCase().trim().replace(/\s+(colour|color)$/i, '');
+  if (name === 'custom') return 'conic-gradient(#f45b5b, #f2c94c, #27ae60, #2d9cdb, #9b51e0, #f45b5b)';
+  return namedColorSwatches[name];
+}
 
 function initialShopProducts(): StoreProduct[] {
   return defaultProducts.map((product) => {
@@ -279,9 +287,11 @@ export default function Customize() {
                     const photos = [...new Set([...(option.images || []), ...(option.image ? [option.image] : [])])];
                     const expanded = expandedOptionId === option.id;
                     const hasOptionDetails = Boolean(option.description || photos.length > 0);
-                    return <article className={`dynamic-option-item ${isModelStep ? 'model-option-item' : ''}`} key={option.id}>
-                      <button type="button" disabled={option.available === false} className={`dynamic-option-choice ${photos.length ? 'has-visual' : ''} ${chosen?.id === option.id ? 'selected' : ''} ${option.available === false ? 'unavailable' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => ({ ...previous, [item.id]: option })); if (hasOptionDetails) setExpandedOptionId(expanded ? null : option.id); }}>
-                        <CustomOptionImage src={photos[0]} name={option.name} />
+                    const isColorStep = /colou?r/i.test(item.title);
+                    const hasVisual = photos.length > 0 || (isColorStep && Boolean(getOptionSwatch(option)));
+                    return <article className={`dynamic-option-item ${isModelStep ? 'model-option-item' : ''} ${/fabric|cloth/i.test(item.title) ? 'fabric-option-item' : ''}`} key={option.id}>
+                      <button type="button" disabled={option.available === false} className={`dynamic-option-choice ${hasVisual ? 'has-visual' : ''} ${isModelStep && photos.length ? 'model-option-card' : ''} ${/fabric|cloth/i.test(item.title) && photos.length ? 'fabric-option-card' : ''} ${isColorStep && hasVisual ? 'color-option-card' : ''} ${chosen?.id === option.id ? 'selected' : ''} ${option.available === false ? 'unavailable' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => ({ ...previous, [item.id]: option })); if (hasOptionDetails) setExpandedOptionId(expanded ? null : option.id); }}>
+                        {photos.length > 0 ? <CustomOptionImage src={photos[0]} name={option.name} /> : isColorStep && getOptionSwatch(option) ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: getOptionSwatch(option) }} aria-label={`${option.name} swatch`} /> : null}
                         <span className="dynamic-option-copy"><b>{option.name}</b>{option.description && <small className="subtle">{option.description}</small>}{option.available === false && <small className="subtle">Currently unavailable</small>}</span>
                         <b>{(option.priceAdjustment || 0) > 0 ? `+ ₹${option.priceAdjustment!.toLocaleString('en-IN')}` : (option.priceAdjustment || 0) < 0 ? `− ₹${Math.abs(option.priceAdjustment!).toLocaleString('en-IN')}` : 'Included'}</b>
                       </button>

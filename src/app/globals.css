@@ -363,3 +363,13 @@ body{background:var(--ink);color:var(--ivory);font-family:var(--font-ui),Arial,s
 .custom-option-gallery-item>div>span{display:flex;gap:3px}
 .custom-option-gallery-item .admin-btn{min-width:26px;padding:4px 7px}
 @media(max-width:560px){.model-option-item .dynamic-option-choice{min-height:92px}.model-option-item .dynamic-option-choice.has-visual{grid-template-columns:42px minmax(0,1fr);min-height:102px}.model-option-item .dynamic-option-choice.has-visual>.dynamic-option-image{width:42px;height:54px;flex-basis:42px}.model-option-gallery{grid-template-columns:repeat(auto-fit,minmax(58px,1fr))}.model-option-gallery img{height:68px}}
+.dynamic-option-choice.has-visual.model-option-card,.dynamic-option-choice.has-visual.fabric-option-card{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto;min-height:0}
+.model-option-card>.dynamic-option-image,.fabric-option-card>.dynamic-option-image{grid-column:1;grid-row:1;width:100%;height:136px;flex:auto;object-fit:cover}
+.model-option-card>.dynamic-option-copy,.fabric-option-card>.dynamic-option-copy{grid-column:1;grid-row:2}
+.model-option-card>b:last-child,.fabric-option-card>b:last-child{grid-column:1;grid-row:3;justify-self:end}
+.dynamic-option-color-swatch{display:block;width:100%;height:78px;grid-column:1/-1;border:1px solid #ffffff45;box-shadow:inset 0 0 0 1px #00000012}
+.dynamic-option-choice.has-visual.color-option-card{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto;min-height:0}
+.color-option-card>.dynamic-option-image{grid-column:1;grid-row:1;width:100%;height:78px;flex:auto;object-fit:cover}
+.color-option-card>.dynamic-option-copy{grid-column:1;grid-row:2}
+.color-option-card>b:last-child{grid-column:1;grid-row:3;justify-self:end}
+@media(max-width:560px){.model-option-card>.dynamic-option-image,.fabric-option-card>.dynamic-option-image{height:98px}.dynamic-option-color-swatch,.color-option-card>.dynamic-option-image{height:58px}}
