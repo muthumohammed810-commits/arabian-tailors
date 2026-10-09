@@ -278,14 +278,15 @@ export default function Customize() {
                   {visibleOptions.map(option => {
                     const photos = [...new Set([...(option.images || []), ...(option.image ? [option.image] : [])])];
                     const expanded = expandedOptionId === option.id;
+                    const hasOptionDetails = Boolean(option.description || photos.length > 0);
                     return <article className={`dynamic-option-item ${isModelStep ? 'model-option-item' : ''}`} key={option.id}>
-                      <button type="button" disabled={option.available === false} className={`dynamic-option-choice ${photos.length ? 'has-visual' : ''} ${chosen?.id === option.id ? 'selected' : ''} ${option.available === false ? 'unavailable' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => ({ ...previous, [item.id]: option })); if (isModelStep) setExpandedOptionId(expanded ? null : option.id); }}>
+                      <button type="button" disabled={option.available === false} className={`dynamic-option-choice ${photos.length ? 'has-visual' : ''} ${chosen?.id === option.id ? 'selected' : ''} ${option.available === false ? 'unavailable' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => ({ ...previous, [item.id]: option })); if (hasOptionDetails) setExpandedOptionId(expanded ? null : option.id); }}>
                         <CustomOptionImage src={photos[0]} name={option.name} />
                         <span className="dynamic-option-copy"><b>{option.name}</b>{option.description && <small className="subtle">{option.description}</small>}{option.available === false && <small className="subtle">Currently unavailable</small>}</span>
                         <b>{(option.priceAdjustment || 0) > 0 ? `+ ₹${option.priceAdjustment!.toLocaleString('en-IN')}` : (option.priceAdjustment || 0) < 0 ? `− ₹${Math.abs(option.priceAdjustment!).toLocaleString('en-IN')}` : 'Included'}</b>
                       </button>
-                      {isModelStep && (option.description || photos.length > 0) && <button type="button" className="option-details-toggle" aria-expanded={expanded} onClick={() => setExpandedOptionId(expanded ? null : option.id)}>{expanded ? 'Hide details' : `View details${photos.length > 1 ? ` · ${photos.length} photos` : ''}`}</button>}
-                      {isModelStep && expanded && <div className="model-option-details">{option.description && <p className="subtle">{option.description}</p>}{photos.length > 0 && <div className="model-option-gallery">{photos.map((photo, index) => <img key={`${photo}-${index}`} src={photo} alt={`${option.name} photo ${index + 1}`} />)}</div>}</div>}
+                      {hasOptionDetails && <button type="button" className="option-details-toggle" aria-expanded={expanded} onClick={() => setExpandedOptionId(expanded ? null : option.id)}>{expanded ? 'Hide details' : `View details${photos.length > 1 ? ` · ${photos.length} photos` : ''}`}</button>}
+                      {expanded && hasOptionDetails && <div className="model-option-details">{option.description && <p className="subtle">{option.description}</p>}{photos.length > 0 && <div className="model-option-gallery">{photos.map((photo, index) => <img key={`${photo}-${index}`} src={photo} alt={`${option.name} photo ${index + 1}`} />)}</div>}</div>}
                     </article>;
                   })}
                   {!visibleOptions.length && <p className="subtle">No options are currently shown. Please contact the atelier.</p>}
