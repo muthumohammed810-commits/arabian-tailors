@@ -16,7 +16,7 @@ type TailoringStyle = { id: string; name: string; desc: string; price: number; i
 type Fabric = { name: string; quality: string; price: number; available: boolean; swatch: string };
 const colors = [{ name: 'Ivory', hex: '#eee9dc' }, { name: 'Pure White', hex: '#f8f7f2' }, { name: 'Sand', hex: '#d1c3a3' }, { name: 'Midnight', hex: '#202326' }, { name: 'Slate', hex: '#777b80' }];
 const sizes = ['S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
-const namedColorSwatches: Record<string, string> = { white: '#f8f7f2', 'off white': '#f3f0e7', 'pure white': '#f8f7f2', cream: '#eee5d1', ivory: '#eee9dc', beige: '#d8c7a5', sand: '#d1c3a3', black: '#171817', navy: '#202b3d', midnight: '#202326', grey: '#858585', gray: '#858585', slate: '#777b80', brown: '#76543b', charcoal: '#454545', taupe: '#9a8976' };
+const namedColorSwatches: Record<string, string> = { white: '#f8f7f2', 'off white': '#f3f0e7', 'pure white': '#f8f7f2', cream: '#eee5d1', ivory: '#eee9dc', beige: '#d8c7a5', sand: '#d1c3a3', black: '#171817', navy: '#202b3d', 'navy blue': '#202b3d', midnight: '#202326', grey: '#858585', gray: '#858585', slate: '#777b80', brown: '#76543b', charcoal: '#454545', taupe: '#9a8976' };
 
 function getOptionSwatch(option: CustomizationOption) {
   if (option.swatch && /^#[0-9a-f]{6}$/i.test(option.swatch)) return option.swatch;
@@ -41,9 +41,9 @@ function initialShopProducts(): StoreProduct[] {
   });
 }
 
-function CustomOptionImage({ src, name }: { src?: string; name: string }) {
+function CustomOptionImage({ src, name, fallbackColor }: { src?: string; name: string; fallbackColor?: string }) {
   const [failed, setFailed] = useState(false);
-  if (!src || failed) return null;
+  if (!src || failed) return fallbackColor ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: fallbackColor }} aria-label={`${name} swatch`} /> : null;
   return <img className="dynamic-option-image" src={src} alt={`${name}`} onError={() => setFailed(true)} />;
 }
 
@@ -134,6 +134,10 @@ export default function Customize() {
     ? configuredProduct ? (measurementsEnabled ? measurementFields : []) : (['chest', 'shoulder', 'sleeve', 'length'] as const).map(name => ({ id: name, name, unit: unit as 'cm'|'inch', required: true }))
     : [];
   const missingCustomMeasurements = customOptionMeasurements.some(field => field.required === true && !measurements[field.id]?.trim()) || (showMeasurements && step === measurementStep && measurementFields.some(field => field.required === true && !measurements[field.id]?.trim()));
+  const modelStep = customSteps.find(item => /model/i.test(item.title));
+  const colorStep = customSteps.find(item => /colou?r/i.test(item.title));
+  const selectedModelOption = modelStep ? customSelections[modelStep.id] : undefined;
+  const selectedColorOption = colorStep ? customSelections[colorStep.id] : undefined;
   const selectedOptionTotal = customSteps.reduce((total, item) => total + (customSelections[item.id]?.priceAdjustment || 0), 0);
   const currentStyle = serviceStyles.find((item) => item.id === style) || serviceStyles[0] || defaultStyles[0];
   const currentFabric = serviceFabrics[fabric] || serviceFabrics[0] || defaultFabrics[0];
@@ -174,7 +178,7 @@ export default function Customize() {
     const id = `AT-${Array.from(orderIdBytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
     const fit = sizing === 'standard' ? `Standard · ${size}` : `Custom (${unit}): ${Object.entries(measurements).map(([key, value]) => `${key} ${value || '—'}`).join(', ')}`;
     const productName = selectedProduct?.name || configuredProduct?.name || `${currentStyle.name} Kandura`;
-    const chosenCustomOptions = customSteps.map((item) => ({ stepId: item.id, step: item.title, required: item.required === true, optionId: customSelections[item.id]?.id || '', option: customSelections[item.id]?.name || '', optionDescription: customSelections[item.id]?.description || '', optionImage: customSelections[item.id]?.image || '', priceAdjustment: customSelections[item.id]?.priceAdjustment || 0 }));
+    const chosenCustomOptions = customSteps.map((item) => { const selected = customSelections[item.id]; return { stepId: item.id, step: item.title, required: item.required === true, optionId: selected?.id || '', option: selected?.name || '', optionDescription: selected?.description || '', optionImage: selected?.image || selected?.images?.[0] || '', optionImages: [...new Set([...(selected?.images || []), ...(selected?.image ? [selected.image] : [])])], optionSwatch: selected?.swatch || '', priceAdjustment: selected?.priceAdjustment || 0 }; });
     const enteredMeasurements = measurementFields.reduce<Record<string, string>>((values, field) => { const value = measurements[field.id]; if (value?.trim()) values[field.name] = `${value} ${field.unit}`; return values; }, {});
     const selectedOptions = {
       ...(activeProductOption ? { productOption: activeProductOption } : {}),
@@ -188,7 +192,7 @@ export default function Customize() {
       id,
       customer: name,
       initials: name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase(),
-      product: hasGarmentDefaults ? `${productName} · ${color}` : productName,
+      product: hasGarmentDefaults ? `${productName} · ${color}` : isKandura ? [productName, selectedModelOption?.name, selectedColorOption?.name].filter(Boolean).join(' · ') : productName,
       ...(selectedProduct ? { productId: selectedProduct.id, productName: selectedProduct.name, productImage: selectedProduct.image, basePrice: selectedProduct.price } : configuredProduct ? { productId: configuredProduct.id, productName, productImage: configuredProduct.image, basePrice: configuredProduct.price } : {}),
       date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
       total,
@@ -291,7 +295,7 @@ export default function Customize() {
                     const hasVisual = photos.length > 0 || (isColorStep && Boolean(getOptionSwatch(option)));
                     return <article className={`dynamic-option-item ${isModelStep ? 'model-option-item' : ''} ${/fabric|cloth/i.test(item.title) ? 'fabric-option-item' : ''}`} key={option.id}>
                       <button type="button" disabled={option.available === false} className={`dynamic-option-choice ${hasVisual ? 'has-visual' : ''} ${isModelStep && photos.length ? 'model-option-card' : ''} ${/fabric|cloth/i.test(item.title) && photos.length ? 'fabric-option-card' : ''} ${isColorStep && hasVisual ? 'color-option-card' : ''} ${chosen?.id === option.id ? 'selected' : ''} ${option.available === false ? 'unavailable' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => ({ ...previous, [item.id]: option })); if (hasOptionDetails) setExpandedOptionId(expanded ? null : option.id); }}>
-                        {photos.length > 0 ? <CustomOptionImage src={photos[0]} name={option.name} /> : isColorStep && getOptionSwatch(option) ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: getOptionSwatch(option) }} aria-label={`${option.name} swatch`} /> : null}
+                        {photos.length > 0 ? <CustomOptionImage src={photos[0]} name={option.name} fallbackColor={isColorStep ? getOptionSwatch(option) : undefined} /> : isColorStep && getOptionSwatch(option) ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: getOptionSwatch(option) }} aria-label={`${option.name} swatch`} /> : null}
                         <span className="dynamic-option-copy"><b>{option.name}</b>{option.description && <small className="subtle">{option.description}</small>}{option.available === false && <small className="subtle">Currently unavailable</small>}</span>
                         <b>{(option.priceAdjustment || 0) > 0 ? `+ ₹${option.priceAdjustment!.toLocaleString('en-IN')}` : (option.priceAdjustment || 0) < 0 ? `− ₹${Math.abs(option.priceAdjustment!).toLocaleString('en-IN')}` : 'Included'}</b>
                       </button>
