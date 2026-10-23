@@ -41,9 +41,12 @@ function initialShopProducts(): StoreProduct[] {
   });
 }
 
-function CustomOptionImage({ src, name, fallbackColor }: { src?: string; name: string; fallbackColor?: string }) {
+function CustomOptionImage({ src, name, fallbackColor, modelCard = false }: { src?: string; name: string; fallbackColor?: string; modelCard?: boolean }) {
   const [failed, setFailed] = useState(false);
-  if (!src || failed) return fallbackColor ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: fallbackColor }} aria-label={`${name} swatch`} /> : null;
+  if (!src || failed) {
+    if (modelCard) return <span className="dynamic-option-fallback model-photo-fallback" role="img" aria-label={`${name} photo not uploaded`}><span>Model photo not uploaded</span></span>;
+    return fallbackColor ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: fallbackColor }} aria-label={`${name} swatch`} /> : null;
+  }
   return <img className="dynamic-option-image" src={src} alt={`${name}`} onError={() => setFailed(true)} />;
 }
 
@@ -292,10 +295,10 @@ export default function Customize() {
                     const expanded = expandedOptionId === option.id;
                     const hasOptionDetails = Boolean(option.description || photos.length > 0);
                     const isColorStep = /colou?r/i.test(item.title);
-                    const hasVisual = photos.length > 0 || (isColorStep && Boolean(getOptionSwatch(option)));
+                    const hasVisual = isModelStep || photos.length > 0 || (isColorStep && Boolean(getOptionSwatch(option)));
                     return <article className={`dynamic-option-item ${isModelStep ? 'model-option-item' : ''} ${/fabric|cloth/i.test(item.title) ? 'fabric-option-item' : ''}`} key={option.id}>
-                      <button type="button" disabled={option.available === false} className={`dynamic-option-choice ${hasVisual ? 'has-visual' : ''} ${isModelStep && photos.length ? 'model-option-card' : ''} ${/fabric|cloth/i.test(item.title) && photos.length ? 'fabric-option-card' : ''} ${isColorStep && hasVisual ? 'color-option-card' : ''} ${chosen?.id === option.id ? 'selected' : ''} ${option.available === false ? 'unavailable' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => ({ ...previous, [item.id]: option })); if (hasOptionDetails) setExpandedOptionId(expanded ? null : option.id); }}>
-                        {photos.length > 0 ? <CustomOptionImage src={photos[0]} name={option.name} fallbackColor={isColorStep ? getOptionSwatch(option) : undefined} /> : isColorStep && getOptionSwatch(option) ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: getOptionSwatch(option) }} aria-label={`${option.name} swatch`} /> : null}
+                      <button type="button" disabled={option.available === false} className={`dynamic-option-choice ${hasVisual ? 'has-visual' : ''} ${isModelStep ? 'model-option-card' : ''} ${/fabric|cloth/i.test(item.title) && photos.length ? 'fabric-option-card' : ''} ${isColorStep && hasVisual ? 'color-option-card' : ''} ${chosen?.id === option.id ? 'selected' : ''} ${option.available === false ? 'unavailable' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => ({ ...previous, [item.id]: option })); if (hasOptionDetails) setExpandedOptionId(expanded ? null : option.id); }}>
+                        {isModelStep ? <CustomOptionImage src={photos[0]} name={option.name} modelCard /> : photos.length > 0 ? <CustomOptionImage src={photos[0]} name={option.name} fallbackColor={isColorStep ? getOptionSwatch(option) : undefined} /> : isColorStep && getOptionSwatch(option) ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: getOptionSwatch(option) }} aria-label={`${option.name} swatch`} /> : null}
                         <span className="dynamic-option-copy"><b>{option.name}</b>{option.description && <small className="subtle">{option.description}</small>}{option.available === false && <small className="subtle">Currently unavailable</small>}</span>
                         <b>{(option.priceAdjustment || 0) > 0 ? `+ ₹${option.priceAdjustment!.toLocaleString('en-IN')}` : (option.priceAdjustment || 0) < 0 ? `− ₹${Math.abs(option.priceAdjustment!).toLocaleString('en-IN')}` : 'Included'}</b>
                       </button>
