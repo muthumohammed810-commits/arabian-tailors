@@ -11,7 +11,7 @@ export function appendOptionPhoto<OptionType extends { image?: string; images?: 
 export async function uploadFilesSequentially<FileType extends { size: number }>(
   files: FileType[],
   uploadFile: (file: FileType, onProgress: (event: UploadProgressEvent) => void) => Promise<string>,
-  onUploaded: (url: string, file: FileType) => void,
+  onUploaded: (url: string, file: FileType) => void | Promise<void>,
   onProgress: (percentage: number) => void,
 ) {
   if (!files.length) return;
@@ -31,7 +31,7 @@ export async function uploadFilesSequentially<FileType extends { size: number }>
       report(((completedBytes + loadedBytes) / Math.max(totalBytes, 1)) * 100);
     });
     if (!url) throw new Error('The image upload completed without returning a photo URL.');
-    onUploaded(url, file);
+    await onUploaded(url, file);
     completedBytes += file.size;
     report((completedBytes / Math.max(totalBytes, 1)) * 100);
   }

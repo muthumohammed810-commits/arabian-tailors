@@ -25,6 +25,28 @@ function logOrderWriteFailure(orderId: string, error: unknown) {
     statusCode: Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined,
   });
 }
+function validModelCustomization(value: unknown, validateOption: (option: any, allowModelSettings: boolean) => boolean) {
+  if (value === undefined) return true;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const categories = value as Record<string, any>;
+  return (['colors', 'fabrics', 'stitching'] as const).every((key) => {
+    const category = categories[key];
+    return category === undefined || (category && typeof category === 'object' && !Array.isArray(category)
+      && (category.visible === undefined || typeof category.visible === 'boolean')
+      && (category.required === undefined || typeof category.required === 'boolean')
+      && Array.isArray(category.options)
+      && category.options.every((option: any) => validateOption(option, false)));
+  }) && (categories.steps === undefined || Array.isArray(categories.steps) && (() => {
+    const stepIds = new Set<string>();
+    return categories.steps.every((step: any) => step && typeof step === 'object' && !Array.isArray(step)
+      && validText(step.id, 100) && !stepIds.has(step.id) && (stepIds.add(step.id), true)
+      && validText(step.title, 120)
+      && (step.description === undefined || typeof step.description === 'string' && step.description.length <= 500)
+      && (step.visible === undefined || typeof step.visible === 'boolean')
+      && (step.required === undefined || typeof step.required === 'boolean')
+      && Array.isArray(step.options) && step.options.every((option: any) => validateOption(option, false)));
+  })());
+}
 function validCustomizationSteps(value: unknown) {
   if (value === undefined) return true;
   if (!Array.isArray(value)) return false;
@@ -33,12 +55,13 @@ function validCustomizationSteps(value: unknown) {
     if (!step || typeof step !== 'object' || Array.isArray(step) || !validText(step.id, 100) || ids.has(step.id) || !validText(step.title, 120) || (step.description !== undefined && (typeof step.description !== 'string' || step.description.length > 500)) || (step.required !== undefined && typeof step.required !== 'boolean') || (step.available !== undefined && typeof step.available !== 'boolean') || !Array.isArray(step.options)) return false;
     ids.add(step.id);
     const optionIds = new Set<string>();
-    return step.options.every((option: any) => {
-      if (!option || typeof option !== 'object' || Array.isArray(option) || !validText(option.id, 100) || optionIds.has(option.id) || !validText(option.name, 160) || (option.description !== undefined && (typeof option.description !== 'string' || option.description.length > 500)) || (option.image !== undefined && (typeof option.image !== 'string' || option.image.length > 2000)) || (option.images !== undefined && (!Array.isArray(option.images) || !option.images.every((image: unknown) => typeof image === 'string' && image.length <= 2000))) || (option.priceAdjustment !== undefined && (!Number.isFinite(option.priceAdjustment) || Math.abs(option.priceAdjustment) > 1_000_000)) || (option.available !== undefined && typeof option.available !== 'boolean') || (option.visible !== undefined && typeof option.visible !== 'boolean')) return false;
+    const validOption = (option: any, allowModelSettings: boolean): boolean => {
+      if (!option || typeof option !== 'object' || Array.isArray(option) || !validText(option.id, 100) || optionIds.has(option.id) || !validText(option.name, 160) || (option.description !== undefined && (typeof option.description !== 'string' || option.description.length > 500)) || (option.image !== undefined && (typeof option.image !== 'string' || option.image.length > 2000)) || (option.images !== undefined && (!Array.isArray(option.images) || !option.images.every((image: unknown) => typeof image === 'string' && image.length <= 2000))) || (option.priceAdjustment !== undefined && (!Number.isFinite(option.priceAdjustment) || Math.abs(option.priceAdjustment) > 1_000_000)) || (option.basePrice !== undefined && (!Number.isFinite(option.basePrice) || option.basePrice < 0 || option.basePrice > 1_000_000)) || (option.stock !== undefined && (!Number.isInteger(option.stock) || option.stock < 0 || option.stock > 1_000_000)) || (option.available !== undefined && typeof option.available !== 'boolean') || (option.visible !== undefined && typeof option.visible !== 'boolean')) return false;
       optionIds.add(option.id);
-      if (option.swatch !== undefined && (typeof option.swatch !== 'string' || !/^#[0-9a-f]{6}$/i.test(option.swatch))) return false;
-      return true;
-    });
+      if (option.swatch !== undefined && (typeof option.swatch !== 'string' || !(/^#[0-9a-f]{6}$/i.test(option.swatch) || /^rgb\(\s*(?:25[0-5]|2[0-4]\d|1\d\d|\d?\d)\s*,\s*(?:25[0-5]|2[0-4]\d|1\d\d|\d?\d)\s*,\s*(?:25[0-5]|2[0-4]\d|1\d\d|\d?\d)\s*\)$/i.test(option.swatch)))) return false;
+      return !allowModelSettings || validModelCustomization(option.modelCustomization, validOption);
+    };
+    return step.options.every((option: any) => validOption(option, true));
   });
 }
 function validMeasurementFields(value: unknown) {
@@ -95,6 +118,31 @@ function validateSettings(value: any) {
   return value && typeof value === 'object' && !Array.isArray(value)
     && Object.entries(value).every(([key, v]) => ['storeName','gold','background','heroImage','upiId','accountName','accountNumber','ifsc','bankName','qr'].includes(key) && typeof v === 'string' && v.length <= 2_000_000);
 }
+function isVercelBlobUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 2000) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && (url.hostname === 'blob.vercel-storage.com' || url.hostname.endsWith('.blob.vercel-storage.com'));
+  } catch { return false; }
+}
+function logAdminWriteFailure(resource: unknown, error: unknown) {
+  const details = error && typeof error === 'object' ? error as { name?: unknown; code?: unknown; status?: unknown; statusCode?: unknown } : {};
+  const safe = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(value) ? value : undefined;
+  const status = Number(details.statusCode ?? details.status);
+  console.error('[store-data] Admin write failed', {
+    resource: ['products', 'productPhotos', 'optionPhotos', 'settings', 'order', 'customer'].includes(String(resource)) ? String(resource) : 'unknown',
+    errorName: safe(details.name), errorCode: safe(details.code),
+    statusCode: Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined,
+  });
+}
+function optionPhotos(option: any) {
+  const images = [...new Set([...(Array.isArray(option.images) ? option.images : []), ...(typeof option.image === 'string' && option.image ? [option.image] : [])])];
+  return images;
+}
+function setOptionPhotos(option: any, images: string[]) {
+  option.images = images;
+  option.image = images[0] || '';
+}
 
 export async function GET() {
   if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Shared storage is not connected.' }, 503);
@@ -129,6 +177,39 @@ export async function PUT(request: Request) {
       if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && validMeasurementFields(p.measurements) && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean') && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000) && (p.images === undefined || Array.isArray(p.images) && p.images.every((image: any) => typeof image === 'string' && image.length <= 2000)))) return json({ error: 'Invalid product list.' }, 400);
       if (new Set(body.products.map((p: any) => p.id)).size !== body.products.length) return json({ error: 'Product IDs must be unique.' }, 400);
       const store = await readStore(); store.products = body.products; await saveStore(store); return json({ ok: true, products: store.products });
+    }
+    if (body.resource === 'productPhotos' || body.resource === 'optionPhotos') {
+      if (!validText(body.productId, 100) || !isVercelBlobUrl(body.url) || !['add', 'replace'].includes(body.action)) return json({ error: 'Invalid image update.' }, 400);
+      if (body.action === 'replace' && (!Number.isInteger(body.index) || body.index < 0)) return json({ error: 'Invalid photo position.' }, 400);
+      const store = await readStore();
+      const product = store.products.find((item: any) => item.id === body.productId);
+      if (!product) return json({ error: 'Product not found. Save the product before uploading photos.' }, 404);
+      let target: any;
+      if (body.resource === 'productPhotos') {
+        target = product;
+      } else if (validText(body.modelId, 100)) {
+        const model = (product.customizationSteps || []).flatMap((step: any) => step.options || []).find((option: any) => option.id === body.modelId);
+        if (body.category !== undefined) {
+          if (!['colors', 'fabrics', 'stitching'].includes(body.category)) return json({ error: 'Invalid model category.' }, 400);
+          target = model?.modelCustomization?.[body.category]?.options?.find((option: any) => option.id === body.optionId);
+        } else if (validText(body.modelStepId, 100)) {
+          target = model?.modelCustomization?.steps?.find((step: any) => step.id === body.modelStepId)?.options?.find((option: any) => option.id === body.optionId);
+        }
+      } else if (validText(body.stepId, 100) && validText(body.optionId, 100)) {
+        const step = (product.customizationSteps || []).find((item: any) => item.id === body.stepId);
+        target = step?.options?.find((option: any) => option.id === body.optionId);
+      }
+      if (!target) return json({ error: 'The selected product option was not found. Save it before uploading photos.' }, 404);
+      const images = optionPhotos(target);
+      if (body.action === 'add') {
+        if (!images.includes(body.url)) images.push(body.url);
+      } else {
+        if (body.index >= images.length) return json({ error: 'Photo position no longer exists. Refresh and try again.' }, 409);
+        images[body.index] = body.url;
+      }
+      setOptionPhotos(target, images);
+      await saveStore(store);
+      return json({ ok: true, productId: product.id, image: target.image || '', images });
     }
     if (body.resource === 'order') {
       if (!validText(body.id, 100)) return json({ error: 'Invalid order ID.' }, 400);
@@ -175,7 +256,7 @@ export async function PUT(request: Request) {
       return json({ error: 'Invalid customer action.' }, 400);
     }
     return json({ error: 'Unknown data resource.' }, 400);
-  } catch { return json({ error: 'Could not save store data.' }, 500); }
+  } catch (error) { logAdminWriteFailure(body.resource, error); return json({ error: 'Could not save store data.' }, 500); }
 }
 
 export async function POST(request: Request) {

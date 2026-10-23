@@ -8,7 +8,11 @@ import { GarmentVisual } from '@/components/garment-visual';
 import { createUpiPaymentUrl } from '@/lib/upi-payment';
 import { customizationDefaults, defaultMeasurements } from '@/lib/customization-defaults';
 
-type CustomizationOption = { id: string; name: string; description?: string; image?: string; images?: string[]; swatch?: string; priceAdjustment?: number; available?: boolean; visible?: boolean };
+type ManagedModelCategory = { visible?: boolean; required?: boolean; options: CustomizationOption[] };
+type ManagedModelStep = { id: string; title: string; description?: string; visible?: boolean; required?: boolean; options: CustomizationOption[] };
+type ModelCustomization = { colors?: ManagedModelCategory; fabrics?: ManagedModelCategory; stitching?: ManagedModelCategory; steps?: ManagedModelStep[] };
+type ModelCategoryKey = 'colors' | 'fabrics' | 'stitching';
+type CustomizationOption = { id: string; name: string; description?: string; image?: string; images?: string[]; swatch?: string; priceAdjustment?: number; basePrice?: number; stock?: number; available?: boolean; visible?: boolean; modelCustomization?: ModelCustomization };
 type CustomizationStep = { id: string; title: string; description?: string; required?: boolean; available?: boolean; options: CustomizationOption[] };
 type MeasurementField = { id: string; name: string; unit: 'cm' | 'inch'; required?: boolean; available?: boolean };
 type StoreProduct = Product & { images?: string[]; available?: boolean; options?: string[]; customizationSteps?: CustomizationStep[]; measurements?: MeasurementField[]; measurementsEnabled?: boolean; stitchingType?: string; stock?: number };
@@ -20,6 +24,7 @@ const namedColorSwatches: Record<string, string> = { white: '#f8f7f2', 'off whit
 
 function getOptionSwatch(option: CustomizationOption) {
   if (option.swatch && /^#[0-9a-f]{6}$/i.test(option.swatch)) return option.swatch;
+  if (option.swatch && /^rgb\(\s*(?:25[0-5]|2[0-4]\d|1\d\d|\d?\d)\s*,\s*(?:25[0-5]|2[0-4]\d|1\d\d|\d?\d)\s*,\s*(?:25[0-5]|2[0-4]\d|1\d\d|\d?\d)\s*\)$/i.test(option.swatch)) return option.swatch;
   const name = option.name.toLowerCase().trim().replace(/\s+(colour|color)$/i, '');
   if (name === 'custom') return 'conic-gradient(#f45b5b, #f2c94c, #27ae60, #2d9cdb, #9b51e0, #f45b5b)';
   return namedColorSwatches[name];
@@ -113,7 +118,28 @@ export default function Customize() {
   const activeProductOption = selectedProductOption || configuredProduct?.options?.[0] || '';
   const isAbaya = (selectedProduct || configuredProduct)?.category.toLowerCase() === 'abaya';
   const isKandura = (selectedProduct || configuredProduct)?.category.toLowerCase() === 'kandura' || !selectedProduct;
-  const customSteps = (configuredProduct?.customizationSteps || []).filter(item => item.available !== false);
+  const baseCustomSteps = configuredProduct?.customizationSteps || [];
+  const modelSelectionStep = baseCustomSteps.find(item => /model/i.test(item.title));
+  const selectedModelOption = modelSelectionStep ? customSelections[modelSelectionStep.id] : undefined;
+  const modelCustomization = isKandura ? selectedModelOption?.modelCustomization : undefined;
+  const categoryForTitle = (title: string): ModelCategoryKey | undefined => /model/i.test(title) ? undefined : /colou?r/i.test(title) ? 'colors' : /fabric|cloth/i.test(title) ? 'fabrics' : /stitch/i.test(title) ? 'stitching' : undefined;
+  const customStepsWithModel: CustomizationStep[] = baseCustomSteps.map(item => {
+    const category = categoryForTitle(item.title);
+    const configured = category ? modelCustomization?.[category] : undefined;
+    const modelStep = modelCustomization?.steps?.find(step => step.id === item.id);
+    if (modelStep) return { ...item, title: modelStep.title, description: modelStep.description, available: modelStep.visible !== false, required: modelStep.required ?? item.required, options: modelStep.options };
+    return configured ? { ...item, available: configured.visible !== false, required: configured.required ?? item.required, options: configured.options } : item;
+  });
+  if (modelCustomization) {
+    for (const [key, title] of [['colors', 'Choose a Colour'], ['fabrics', 'Choose a Fabric'], ['stitching', 'Choose Stitching / Style']] as const) {
+      const configured = modelCustomization[key];
+      if (configured && !baseCustomSteps.some(item => categoryForTitle(item.title) === key)) customStepsWithModel.push({ id: `model-${selectedModelOption?.id}-${key}`, title, required: configured.required, available: configured.visible !== false, options: configured.options });
+    }
+    for (const configured of modelCustomization.steps || []) {
+      if (!baseCustomSteps.some(item => item.id === configured.id)) customStepsWithModel.push({ id: configured.id, title: configured.title, description: configured.description, required: configured.required, available: configured.visible !== false, options: configured.options });
+    }
+  }
+  const customSteps = customStepsWithModel.filter(item => item.available !== false);
   const hasStoredCustomization = (configuredProduct?.customizationSteps?.length || 0) > 0;
   const hasGarmentDefaults = (!selectedProduct || isAbaya || isKandura) && !hasStoredCustomization;
   const hasModelStep = isKandura && customSteps[0]?.title.toLowerCase() === 'choose your kandura model';
@@ -139,12 +165,13 @@ export default function Customize() {
   const missingCustomMeasurements = customOptionMeasurements.some(field => field.required === true && !measurements[field.id]?.trim()) || (showMeasurements && step === measurementStep && measurementFields.some(field => field.required === true && !measurements[field.id]?.trim()));
   const modelStep = customSteps.find(item => /model/i.test(item.title));
   const colorStep = customSteps.find(item => /colou?r/i.test(item.title));
-  const selectedModelOption = modelStep ? customSelections[modelStep.id] : undefined;
+  const fabricStep = customSteps.find(item => /fabric|cloth/i.test(item.title));
+  const stitchingStep = customSteps.find(item => /stitch/i.test(item.title));
   const selectedColorOption = colorStep ? customSelections[colorStep.id] : undefined;
   const selectedOptionTotal = customSteps.reduce((total, item) => total + (customSelections[item.id]?.priceAdjustment || 0), 0);
   const currentStyle = serviceStyles.find((item) => item.id === style) || serviceStyles[0] || defaultStyles[0];
   const currentFabric = serviceFabrics[fabric] || serviceFabrics[0] || defaultFabrics[0];
-  const basePrice = selectedProduct ? selectedProduct.price : currentStyle.price;
+  const basePrice = selectedModelOption?.basePrice ?? (selectedProduct ? selectedProduct.price : configuredProduct?.price ?? currentStyle.price);
   const total = useMemo(() => Math.max(0, basePrice + (hasGarmentDefaults ? currentFabric.price : 0) + selectedOptionTotal + (hasGarmentDefaults && speed === 'urgent' ? 350 : 0)), [basePrice, currentFabric.price, selectedOptionTotal, speed, hasGarmentDefaults]);
   const titles = [...(hasProductIntro ? [`Choose your ${selectedProduct!.category.toLowerCase()}`] : hasGarmentDefaults ? ['Choose your style'] : []), ...(hasGarmentDefaults ? ['Select your fabric', 'Choose a colour', 'Your perfect fit'] : []), ...customSteps.map((item) => item.title), ...(showMeasurements ? ['Custom size / measurements'] : []), ...(hasTimingStep ? ['Tailoring speed'] : []), 'Review your design', 'Payment & delivery'];
 
@@ -181,7 +208,7 @@ export default function Customize() {
     const id = `AT-${Array.from(orderIdBytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
     const fit = sizing === 'standard' ? `Standard · ${size}` : `Custom (${unit}): ${Object.entries(measurements).map(([key, value]) => `${key} ${value || '—'}`).join(', ')}`;
     const productName = selectedProduct?.name || configuredProduct?.name || `${currentStyle.name} Kandura`;
-    const chosenCustomOptions = customSteps.map((item) => { const selected = customSelections[item.id]; return { stepId: item.id, step: item.title, required: item.required === true, optionId: selected?.id || '', option: selected?.name || '', optionDescription: selected?.description || '', optionImage: selected?.image || selected?.images?.[0] || '', optionImages: [...new Set([...(selected?.images || []), ...(selected?.image ? [selected.image] : [])])], optionSwatch: selected?.swatch || '', priceAdjustment: selected?.priceAdjustment || 0 }; });
+    const chosenCustomOptions = customSteps.map((item) => { const selected = customSelections[item.id]; return { stepId: item.id, step: item.title, required: item.required === true, optionId: selected?.id || '', option: selected?.name || '', optionDescription: selected?.description || '', optionImage: selected?.image || selected?.images?.[0] || '', optionImages: [...new Set([...(selected?.images || []), ...(selected?.image ? [selected.image] : [])])], optionSwatch: selected?.swatch || '', priceAdjustment: selected?.priceAdjustment || 0, ...(selected?.basePrice !== undefined ? { basePrice: selected.basePrice } : {}), ...(selected?.stock !== undefined ? { stock: selected.stock } : {}) }; });
     const enteredMeasurements = measurementFields.reduce<Record<string, string>>((values, field) => { const value = measurements[field.id]; if (value?.trim()) values[field.name] = `${value} ${field.unit}`; return values; }, {});
     const selectedOptions = {
       ...(activeProductOption ? { productOption: activeProductOption } : {}),
@@ -196,7 +223,7 @@ export default function Customize() {
       customer: name,
       initials: name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase(),
       product: hasGarmentDefaults ? `${productName} · ${color}` : isKandura ? [productName, selectedModelOption?.name, selectedColorOption?.name].filter(Boolean).join(' · ') : productName,
-      ...(selectedProduct ? { productId: selectedProduct.id, productName: selectedProduct.name, productImage: selectedProduct.image, basePrice: selectedProduct.price } : configuredProduct ? { productId: configuredProduct.id, productName, productImage: configuredProduct.image, basePrice: configuredProduct.price } : {}),
+      ...(selectedProduct ? { productId: selectedProduct.id, productName: selectedProduct.name, productImage: selectedProduct.image, basePrice } : configuredProduct ? { productId: configuredProduct.id, productName, productImage: configuredProduct.image, basePrice } : {}),
       date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
       total,
       status: 'New',
@@ -206,7 +233,8 @@ export default function Customize() {
       delivery: { email, phone, address, city, postal },
       design: {
         productType: selectedProduct?.category || 'Kandura',
-        ...(selectedProduct ? { productId: selectedProduct.id, productName: selectedProduct.name, productImage: selectedProduct.image, basePrice: selectedProduct.price, options: [...(activeProductOption ? [activeProductOption] : []), ...chosenCustomOptions.map((item) => item.option).filter(Boolean)] } : { ...(configuredProduct ? { productId: configuredProduct.id, productName, productImage: configuredProduct.image } : {}), style, styleName: customSelections[customSteps[0]?.id]?.name || currentStyle.name, basePrice: configuredProduct?.price ?? currentStyle.price, options: [...(activeProductOption ? [activeProductOption] : []), ...chosenCustomOptions.map((item) => item.option).filter(Boolean)] }),
+        ...(selectedProduct ? { productId: selectedProduct.id, productName: selectedProduct.name, productImage: selectedProduct.image, basePrice, options: [...(activeProductOption ? [activeProductOption] : []), ...chosenCustomOptions.map((item) => item.option).filter(Boolean)] } : { ...(configuredProduct ? { productId: configuredProduct.id, productName, productImage: configuredProduct.image } : {}), style, styleName: selectedModelOption?.name || customSelections[customSteps[0]?.id]?.name || currentStyle.name, basePrice, options: [...(activeProductOption ? [activeProductOption] : []), ...chosenCustomOptions.map((item) => item.option).filter(Boolean)] }),
+        ...(selectedModelOption ? { selectedModel: { id: selectedModelOption.id, name: selectedModelOption.name, image: selectedModelOption.image || selectedModelOption.images?.[0] || '', images: [...new Set([...(selectedModelOption.images || []), ...(selectedModelOption.image ? [selectedModelOption.image] : [])])], basePrice: selectedModelOption.basePrice ?? basePrice, priceAdjustment: selectedModelOption.priceAdjustment || 0 } } : {}),
         ...selectedOptions,
         ...(hasGarmentDefaults ? { fabricPrice: currentFabric.price, priorityPrice: hasTimingStep && speed === 'urgent' ? 350 : 0 } : {}),
         total,
@@ -282,7 +310,7 @@ export default function Customize() {
             {activeCustomStep && (() => {
               const item = activeCustomStep;
               const chosen = customSelections[item.id];
-              const visibleOptions = item.options.filter(option => option.visible !== false);
+                  const visibleOptions = item.options.filter(option => option.visible !== false && option.available !== false && (option.stock === undefined || option.stock > 0));
               const isModelStep = /model/i.test(item.title);
               const showCustomMeasurements = needsCustomMeasurements && customOptionMeasurements.length > 0;
               return <>
@@ -297,10 +325,11 @@ export default function Customize() {
                     const isColorStep = /colou?r/i.test(item.title);
                     const hasVisual = isModelStep || photos.length > 0 || (isColorStep && Boolean(getOptionSwatch(option)));
                     return <article className={`dynamic-option-item ${isModelStep ? 'model-option-item' : ''} ${/fabric|cloth/i.test(item.title) ? 'fabric-option-item' : ''}`} key={option.id}>
-                      <button type="button" disabled={option.available === false} className={`dynamic-option-choice ${hasVisual ? 'has-visual' : ''} ${isModelStep ? 'model-option-card' : ''} ${/fabric|cloth/i.test(item.title) && photos.length ? 'fabric-option-card' : ''} ${isColorStep && hasVisual ? 'color-option-card' : ''} ${chosen?.id === option.id ? 'selected' : ''} ${option.available === false ? 'unavailable' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => ({ ...previous, [item.id]: option })); if (hasOptionDetails) setExpandedOptionId(expanded ? null : option.id); }}>
-                        {isModelStep ? <CustomOptionImage src={photos[0]} name={option.name} modelCard /> : photos.length > 0 ? <CustomOptionImage src={photos[0]} name={option.name} fallbackColor={isColorStep ? getOptionSwatch(option) : undefined} /> : isColorStep && getOptionSwatch(option) ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: getOptionSwatch(option) }} aria-label={`${option.name} swatch`} /> : null}
+                      <button type="button" className={`dynamic-option-choice ${hasVisual ? 'has-visual' : ''} ${isModelStep ? 'model-option-card' : ''} ${/fabric|cloth/i.test(item.title) && photos.length ? 'fabric-option-card' : ''} ${isColorStep && hasVisual ? 'color-option-card' : ''} ${isColorStep && photos.length ? 'color-option-photo-card' : ''} ${chosen?.id === option.id ? 'selected' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => isModelStep ? { [item.id]: option } : ({ ...previous, [item.id]: option })); if (hasOptionDetails) setExpandedOptionId(expanded ? null : option.id); }}>
+                        {isColorStep && getOptionSwatch(option) ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: getOptionSwatch(option) }} aria-label={`${option.name} swatch`} /> : null}
+                        {isModelStep ? <CustomOptionImage src={photos[0]} name={option.name} modelCard /> : photos.length > 0 ? <CustomOptionImage src={photos[0]} name={option.name} fallbackColor={isColorStep ? getOptionSwatch(option) : undefined} /> : null}
                         <span className="dynamic-option-copy"><b>{option.name}</b>{option.description && <small className="subtle">{option.description}</small>}{option.available === false && <small className="subtle">Currently unavailable</small>}</span>
-                        <b>{(option.priceAdjustment || 0) > 0 ? `+ ₹${option.priceAdjustment!.toLocaleString('en-IN')}` : (option.priceAdjustment || 0) < 0 ? `− ₹${Math.abs(option.priceAdjustment!).toLocaleString('en-IN')}` : 'Included'}</b>
+                        <b>{isModelStep && option.basePrice !== undefined ? `₹${option.basePrice.toLocaleString('en-IN')} base` : (option.priceAdjustment || 0) > 0 ? `+ ₹${option.priceAdjustment!.toLocaleString('en-IN')}` : (option.priceAdjustment || 0) < 0 ? `− ₹${Math.abs(option.priceAdjustment!).toLocaleString('en-IN')}` : 'Included'}</b>
                       </button>
                       {hasOptionDetails && <button type="button" className="option-details-toggle" aria-expanded={expanded} onClick={() => setExpandedOptionId(expanded ? null : option.id)}>{expanded ? 'Hide details' : `View details${photos.length > 1 ? ` · ${photos.length} photos` : ''}`}</button>}
                       {expanded && hasOptionDetails && <div className="model-option-details">{option.description && <p className="subtle">{option.description}</p>}{photos.length > 0 && <div className="model-option-gallery">{photos.map((photo, index) => <img key={`${photo}-${index}`} src={photo} alt={`${option.name} photo ${index + 1}`} />)}</div>}</div>}
