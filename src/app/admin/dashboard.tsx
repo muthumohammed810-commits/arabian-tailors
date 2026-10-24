@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowRight, Check, ChevronDown, CreditCard, LayoutDashboard, Menu, Package, Plus, Search, Settings, Shirt, Users, X, Trash2, Download } from 'lucide-react';
 import { put } from '@vercel/blob/client';
-import { appendOptionPhoto, uploadFilesSequentially, type UploadProgressEvent } from '@/lib/upload-batch';
+import { appendOptionPhoto, ImageUploadError, uploadFilesSequentially, type UploadFailureStage, type UploadProgressEvent } from '@/lib/upload-batch';
 
 type ManagedModelCategory={visible?:boolean;required?:boolean;options:CustomizationOption[]};
 type ManagedModelStep={id:string;title:string;description?:string;visible?:boolean;required?:boolean;options:CustomizationOption[]};
@@ -21,14 +21,17 @@ const nav=[{title:'Workspace',items:[['Overview',LayoutDashboard],['Orders',Pack
 const money=(v:number)=>`₹${Number(v||0).toLocaleString('en-IN')}`;
 const IMAGE_UPLOAD_IDLE_TIMEOUT_MS=120_000;
 const MAX_IMAGE_UPLOAD_BYTES=5*1024**4;
+const isVercelBlobImageUrl=(value:unknown):value is string=>{if(typeof value!=='string')return false;try{const url=new URL(value);return url.protocol==='https:'&&(url.hostname==='blob.vercel-storage.com'||url.hostname.endsWith('.blob.vercel-storage.com'))}catch{return false}};
 function AdminModelPhotoPreview({src,name}:{src?:string;name:string}){const [failed,setFailed]=useState(false);useEffect(()=>setFailed(false),[src]);if(!src||failed)return <div className="model-admin-photo-preview model-admin-photo-fallback" role="img" aria-label={`${name||'Model'} photo not uploaded`}><span>Upload this model’s photo</span></div>;return <div className="model-admin-photo-preview"><img src={src} alt={`${name} primary model photo`} onError={()=>setFailed(true)}/><span>Primary photo</span></div>}
+const uploadStageLabel:Record<UploadFailureStage,string>={authentication:'Admin authentication',token:'Secure upload authorization',blob:'Vercel Blob transfer',save:'Saving the image to this product'};
 const imageUploadErrorMessage=(error:unknown)=>{
- if(error instanceof Error&&/timed out after 2 minutes/i.test(error.message))return error.message;
- if(error instanceof Error&&/admin session may have expired|sign in required|unauthorized/i.test(error.message))return 'Your admin session may have expired. Sign in again and retry the image upload.';
- if(error instanceof Error&&/image storage is not connected/i.test(error.message))return error.message;
- if(error instanceof Error&&/use a jpeg, png, webp, or gif image/i.test(error.message))return error.message;
- if(error instanceof Error&&/without returning a photo url|secure image upload service/i.test(error.message))return error.message;
- return 'Image upload failed before storage confirmed it. Please retry. Any photos already uploaded in this batch have been kept.';
+ if(error instanceof ImageUploadError){
+  const file=error.fileName?`“${error.fileName}”: `:'';
+  const status=error.statusCode?` (HTTP ${error.statusCode})`:'';
+  return `${file}${uploadStageLabel[error.stage]} failed${status}. ${error.message} Previously saved images in this batch were kept.`;
+ }
+ if(error instanceof Error&&/use a jpeg, png, webp, or gif image|selected image is empty|exceeds vercel blob/i.test(error.message))return error.message;
+ return 'Image upload failed. The current image was not marked complete; any earlier images saved in this batch were kept. Retry or contact the atelier administrator.';
 };
 type PhotoSaveTarget={resource:'productPhotos'|'optionPhotos';productId:string;stepId?:string;optionId?:string;modelId?:string;modelStepId?:string;category?:'colors'|'fabrics'|'stitching';action:'add'|'replace';index?:number};
 function applySavedPhotos(product:Product,target:PhotoSaveTarget,images:string[]):Product{
@@ -41,9 +44,18 @@ async function saveUploadedPhoto(target:PhotoSaveTarget,url:string):Promise<stri
  const controller=new AbortController();const timeout=window.setTimeout(()=>controller.abort(),45_000);
  try{const response=await fetch('/api/store-data',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...target,url}),signal:controller.signal});
   const result=await response.json().catch(()=>null);
-  if(!response.ok||!Array.isArray(result?.images))throw new Error(typeof result?.error==='string'?result.error:'The photo uploaded but could not be saved to the product. Your previous photos are still intact.');
+  if(!response.ok||result?.ok!==true||result?.productId!==target.productId||!Array.isArray(result?.images)||!result.images.includes(url)){
+   const statusCode=response.status||undefined;
+   const stage:UploadFailureStage=statusCode===401||statusCode===403?'authentication':'save';
+   let message='The uploaded image URL was not confirmed in the saved product data.';
+   if(statusCode===404||statusCode===409)message='The product or option changed while uploading. Refresh the Admin editor and retry.';
+   else if(statusCode===503)message='Store storage is unavailable in this deployment. The photo was not added to the gallery.';
+   else if(statusCode&&statusCode>=500)message='The store could not persist the image URL. Refresh to check whether the save completed before retrying.';
+   else if(stage==='authentication')message='Your admin session expired before the image could be saved. Sign in again, then refresh the product before retrying.';
+   throw new ImageUploadError(stage,message,{statusCode});
+  }
   return result.images as string[];
- }catch(error){if(controller.signal.aborted)throw new Error('The image reached storage, but saving it to the product timed out. The gallery was not marked complete; refresh to check whether the save finished.');throw error}finally{window.clearTimeout(timeout)}
+ }catch(error){if(controller.signal.aborted)throw new ImageUploadError('save','The image reached storage, but saving its URL timed out. Refresh the product to check whether the save completed before retrying.',{cause:error});if(error instanceof ImageUploadError)throw error;if(error instanceof TypeError)throw new ImageUploadError('save','The connection to the store save API was interrupted. The gallery was not marked complete; refresh before retrying.',{cause:error});throw new ImageUploadError('save','The uploaded image URL could not be confirmed in the saved product data.',{cause:error})}finally{window.clearTimeout(timeout)}
 }
 function seedModelCustomization(product:Product,model:CustomizationOption):ModelCustomization{
  const prior=model.modelCustomization||{};const steps=product.customizationSteps||[];
@@ -113,7 +125,60 @@ export default function AdminDashboard(){
  const visibleCustomers=useMemo(()=>customers.filter(c=>`${c.name} ${c.email} ${c.phone} ${c.city}`.toLowerCase().includes(search.toLowerCase())),[customers,search]);
  const persistProductDraft=async()=>{if(!productEditor)return null;if(!productEditor.name.trim()){notify('Enter a product name before saving.');return null}if(!productEditor.category.trim()){notify('Enter a product category before saving.');return null}if(!Number.isFinite(productEditor.price)||productEditor.price<0){notify('Enter a valid non-negative base price.');return null}if(!Number.isFinite(productEditor.stock)||productEditor.stock<0){notify('Enter a valid non-negative stock quantity.');return null}const unnamedOption=productEditor.customizationSteps?.flatMap(step=>step.options).find(option=>!option.name.trim());if(unnamedOption){notify('Give every customization option a name before saving.');return null}const images=productEditor.images?.length?productEditor.images:productEditor.image?[productEditor.image]:[];const p={...productEditor,images,image:images[0]||'',id:productEditor.id||`product-${crypto.randomUUID()}`};const next=products.some(x=>x.id===p.id)?products.map(x=>x.id===p.id?p:x):[p,...products];if(!await mutate({resource:'products',products:next}))return null;setProductEditor(p);return p};
  const saveProduct=async()=>{if(await persistProductDraft()){setProductEditor(null);setManagingModelId(null)}};
-  const uploadImage=async(file:File,onProgress?:(event:UploadProgressEvent)=>void)=>{const type=file.type;const extension=type==='image/jpeg'?'jpg':type==='image/png'?'png':type==='image/webp'?'webp':type==='image/gif'?'gif':'';if(!extension)throw new Error('Use a JPEG, PNG, WebP, or GIF image.');if(file.size===0)throw new Error('The selected image is empty. Choose a valid image and retry.');if(file.size>MAX_IMAGE_UPLOAD_BYTES)throw new Error('This image exceeds Vercel Blob’s 5 TB per-file maximum. Choose a smaller image.');const pathname=`arabian-tailors/product-images/${crypto.randomUUID()}.${extension}`;const multipart=file.size>100*1024*1024;const controller=new AbortController();let timeout=0;const resetIdleTimeout=()=>{window.clearTimeout(timeout);timeout=window.setTimeout(()=>controller.abort(),IMAGE_UPLOAD_IDLE_TIMEOUT_MS)};resetIdleTimeout();try{const tokenResponse=await fetch('/api/admin/product-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'blob.generate-client-token',payload:{pathname,clientPayload:null,multipart}}),cache:'no-store',signal:controller.signal});if(!tokenResponse.ok){if(tokenResponse.status===401||tokenResponse.status===403)throw new Error('Your admin session may have expired. Sign in again and retry the image upload.');if(tokenResponse.status===503)throw new Error('Image storage is not connected for this deployment.');throw new Error('The secure image upload could not be started.');}let tokenData:{clientToken?:unknown};try{tokenData=await tokenResponse.json()}catch{throw new Error('The secure image upload service returned an invalid response.');}if(typeof tokenData.clientToken!=='string'||!tokenData.clientToken.startsWith('vercel_blob_client_'))throw new Error('The secure image upload service did not return a valid upload token.');const blob=await put(pathname,file,{access:'public',token:tokenData.clientToken,contentType:type,multipart,abortSignal:controller.signal,onUploadProgress:event=>{resetIdleTimeout();if(onProgress)onProgress(event);else setImageUploadProgress(Math.min(99,Math.floor(event.percentage)))}});if(!blob?.url)throw new Error('The image upload completed without returning a photo URL.');return blob.url}catch(error){if(controller.signal.aborted)throw new Error(`Image upload stopped after ${Math.round(IMAGE_UPLOAD_IDLE_TIMEOUT_MS/60_000)} minutes without progress. Please check the connection and retry.`);throw error}finally{window.clearTimeout(timeout)}};
+  const uploadImage=async(file:File,onProgress?:(event:UploadProgressEvent)=>void)=>{
+   const type=file.type;
+   const extension=type==='image/jpeg'?'jpg':type==='image/png'?'png':type==='image/webp'?'webp':type==='image/gif'?'gif':'';
+   if(!extension)throw new ImageUploadError('blob','Use a JPEG, PNG, WebP, or GIF image.');
+   if(file.size===0)throw new ImageUploadError('blob','The selected image is empty. Choose a valid image and retry.');
+   if(file.size>MAX_IMAGE_UPLOAD_BYTES)throw new ImageUploadError('blob','This image exceeds Vercel Blob’s 5 TB per-file maximum. Choose a smaller image.');
+   const pathname=`arabian-tailors/product-images/${crypto.randomUUID()}.${extension}`;
+   const multipart=file.size>100*1024*1024;
+   const controller=new AbortController();
+   let timeout=0;
+   let stage:UploadFailureStage='token';
+   const resetIdleTimeout=()=>{window.clearTimeout(timeout);timeout=window.setTimeout(()=>controller.abort(),IMAGE_UPLOAD_IDLE_TIMEOUT_MS)};
+   resetIdleTimeout();
+   try{
+    let tokenResponse:Response;
+    try{tokenResponse=await fetch('/api/admin/product-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'blob.generate-client-token',payload:{pathname,clientPayload:null,multipart}}),cache:'no-store',signal:controller.signal})}
+    catch(error){if(controller.signal.aborted)throw new ImageUploadError('token','Secure upload authorization timed out. Retry when the connection is stable.',{cause:error});throw new ImageUploadError('token','Could not reach the secure upload authorization API. Check the connection and retry.',{cause:error})}
+    if(!tokenResponse.ok){
+     const tokenResult=await tokenResponse.json().catch(()=>null) as {code?:unknown}|null;
+     const statusCode=tokenResponse.status;
+     if(statusCode===401||statusCode===403||tokenResult?.code==='ADMIN_AUTH_REQUIRED')throw new ImageUploadError('authentication','Your admin session expired or is not authorized. Sign in again and retry.',{statusCode});
+     if(statusCode===503)throw new ImageUploadError('token','Image storage is not configured for this deployment. Contact the site administrator.',{statusCode});
+     throw new ImageUploadError('token','The secure upload API rejected the upload request. Retry, or contact the site administrator if it continues.',{statusCode});
+    }
+    let tokenData:{clientToken?:unknown};
+    try{tokenData=await tokenResponse.json()}catch(error){throw new ImageUploadError('token','The secure upload API returned an invalid response.',{cause:error})}
+    if(typeof tokenData.clientToken!=='string'||!tokenData.clientToken.startsWith('vercel_blob_client_'))throw new ImageUploadError('token','The secure upload API did not return a valid upload authorization.');
+    stage='blob';
+    resetIdleTimeout();
+    let blob;
+    try{
+     blob=await put(pathname,file,{access:'public',token:tokenData.clientToken,contentType:type,multipart,abortSignal:controller.signal,onUploadProgress:event=>{resetIdleTimeout();if(onProgress)onProgress(event);else setImageUploadProgress(Math.min(99,Math.floor(event.percentage)))}});
+    }catch(error){
+     if(controller.signal.aborted)throw new ImageUploadError('blob',`The Blob transfer stopped after ${Math.round(IMAGE_UPLOAD_IDLE_TIMEOUT_MS/60_000)} minutes without transfer progress. The image was not marked complete.`,{cause:error});
+     const details=error&&typeof error==='object'?error as {status?:unknown;statusCode?:unknown;code?:unknown}:{};
+     const statusCode=Number(details.statusCode??details.status);
+     const validStatus=Number.isInteger(statusCode)&&statusCode>=100&&statusCode<=599?statusCode:undefined;
+     let message='The Blob service did not confirm the image upload. Check the connection and retry.';
+     if(validStatus===401||validStatus===403)message='Blob storage rejected the upload authorization. Sign in again; if it continues, the site administrator should check Blob upload permissions.';
+     else if(validStatus===413)message='The selected image is larger than the Blob upload service accepts.';
+     else if(validStatus===429)message='Blob storage is receiving too many uploads. Wait briefly and retry.';
+     else if(validStatus&&validStatus>=500)message='Blob storage returned a temporary server error. Retry in a moment.';
+     else if(error instanceof TypeError)message='The connection to Blob storage was interrupted before the upload was confirmed.';
+     throw new ImageUploadError('blob',message,{statusCode:validStatus,cause:error});
+    }
+    if(!isVercelBlobImageUrl(blob?.url))throw new ImageUploadError('blob','Blob storage completed without returning a valid image URL.');
+    return blob.url;
+   }catch(error){
+    if(error instanceof ImageUploadError)throw error;
+    if(controller.signal.aborted)throw new ImageUploadError(stage,`${stage==='token'?'Secure upload authorization':'Blob transfer'} timed out. Retry when the connection is stable.`,{cause:error});
+    if(error instanceof TypeError&&stage==='token')throw new ImageUploadError('token','The secure upload API response could not be read. Check the connection and retry.',{cause:error});
+    throw new ImageUploadError(stage,stage==='token'?'The secure upload API failed unexpectedly. Retry or contact the site administrator.':'The Blob transfer failed unexpectedly. Retry the image.',{cause:error});
+   }finally{window.clearTimeout(timeout)}
+  };
  const uploadProductImages=async(files:FileList|File[]|null,replaceIndex?:number)=>{if(!productEditor||!files?.length||imageUploading)return;const selectedFiles=Array.from(files);if(replaceIndex!==undefined)selectedFiles.splice(1);setImageUploading(true);setUploadingOptionKey('');setImageError('');setImageUploadProgress(0);setImageUploadStage('Saving product…');try{const saved=await persistProductDraft();if(!saved)throw new Error('Save the product details before uploading its photos.');setImageUploadStage('Uploading to Vercel Blob…');await uploadFilesSequentially(selectedFiles,uploadImage,async(url)=>{setImageUploadStage('Saving photo to product…');const target:PhotoSaveTarget={resource:'productPhotos',productId:saved.id,action:replaceIndex===undefined?'add':'replace',...(replaceIndex===undefined?{}:{index:replaceIndex})};const images=await saveUploadedPhoto(target,url);setProducts(current=>current.map(item=>item.id===saved.id?applySavedPhotos(item,target,images):item));setProductEditor(current=>current?.id===saved.id?applySavedPhotos(current,target,images):current);setImageUploadStage('Uploading…')},setImageUploadProgress);setImageUploadStage('Saved');notify(replaceIndex===undefined?'Photos uploaded and saved to this product.':'Photo replaced and saved to this product.')}catch(error){setImageError(imageUploadErrorMessage(error));setImageUploadProgress(0);setImageUploadStage('')}finally{setImageUploading(false)}};
  const removeProductImage=(index:number)=>{const images=productEditor?.images?.length?[...productEditor.images]:productEditor?.image?[productEditor.image]:[];images.splice(index,1);patchProduct({images,image:images[0]||''})};
  const moveProductImage=(index:number,direction:-1|1)=>{const images=productEditor?.images?.length?[...productEditor.images]:productEditor?.image?[productEditor.image]:[];const target=index+direction;if(target<0||target>=images.length)return;[images[index],images[target]]=[images[target],images[index]];patchProduct({images,image:images[0]||''})};
