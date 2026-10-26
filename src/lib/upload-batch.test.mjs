@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ImageUploadError, uploadFilesSequentially } from './upload-batch.ts';
+import { ImageUploadError, saveUploadedPhotoUrl, uploadFilesSequentially, withAbortableDeadline } from './upload-batch.ts';
 
 const completedProgress = { loaded: 10, total: 10, percentage: 100 };
 
@@ -74,4 +74,130 @@ test('marks a product URL save failure as the failing file and never completes t
   );
 
   assert.equal(progress.some(value => value === 100), false);
+});
+
+test('retries saving an uploaded URL without transferring it again and updates only after confirmation', async () => {
+  let transferCount = 0;
+  const uploadOnce = async () => {
+    transferCount += 1;
+    return 'https://images.blob.vercel-storage.com/already-uploaded.jpg';
+  };
+  const uploadedUrl = await uploadOnce();
+  const gallery = [];
+  let saveAttempt = 0;
+
+  await assert.rejects(saveUploadedPhotoUrl(
+    uploadedUrl,
+    async url => {
+      assert.equal(url, uploadedUrl);
+      saveAttempt += 1;
+      throw new ImageUploadError('save', 'Store did not confirm the URL yet.');
+    },
+    images => gallery.splice(0, gallery.length, ...images),
+  ));
+  assert.deepEqual(gallery, []);
+
+  const saved = await saveUploadedPhotoUrl(
+    uploadedUrl,
+    async url => {
+      assert.equal(url, uploadedUrl);
+      saveAttempt += 1;
+      return ['existing.jpg', url];
+    },
+    images => gallery.splice(0, gallery.length, ...images),
+  );
+
+  assert.equal(transferCount, 1);
+  assert.equal(saveAttempt, 2);
+  assert.deepEqual(saved, ['existing.jpg', uploadedUrl]);
+  assert.deepEqual(gallery, ['existing.jpg', uploadedUrl]);
+});
+
+test('aborts a never-resolving Blob transfer at 97% and names the file', async () => {
+  const progress = [];
+  let wasAborted = false;
+
+  await assert.rejects(
+    uploadFilesSequentially(
+      [{ name: 'hanging-model.jpg', size: 10 }],
+      (_file, onProgress) => {
+        onProgress({ loaded: 97, total: 100, percentage: 97 });
+        return withAbortableDeadline(
+          signal => new Promise(() => { signal.addEventListener('abort', () => { wasAborted = true; }); }),
+          { timeoutMs: 15, onTimeout: () => new ImageUploadError('blob', 'Blob transfer exceeded its deadline.') },
+        );
+      },
+      async () => {},
+      value => progress.push(value),
+    ),
+    error => error instanceof ImageUploadError && error.stage === 'blob' && error.fileName === 'hanging-model.jpg',
+  );
+
+  assert.equal(wasAborted, true);
+  assert.equal(progress.at(-1), 97);
+  assert.equal(progress.includes(100), false);
+});
+
+test('aborts a never-resolving token request and reports the token stage', async () => {
+  let wasAborted = false;
+
+  await assert.rejects(
+    uploadFilesSequentially(
+      [{ name: 'token-pending.png', size: 10 }],
+      () => withAbortableDeadline(
+        signal => new Promise(() => { signal.addEventListener('abort', () => { wasAborted = true; }); }),
+        { timeoutMs: 15, onTimeout: () => new ImageUploadError('token', 'Upload authorization exceeded its deadline.') },
+      ),
+      async () => {},
+      () => {},
+    ),
+    error => error instanceof ImageUploadError && error.stage === 'token' && error.fileName === 'token-pending.png',
+  );
+
+  assert.equal(wasAborted, true);
+});
+
+test('keeps an earlier saved photo when a later store save never resolves', async () => {
+  const files = [
+    { name: 'saved-first.jpg', size: 10 },
+    { name: 'hanging-save.png', size: 10 },
+  ];
+  const progress = [];
+  const savedUrls = [];
+
+  await assert.rejects(
+    uploadFilesSequentially(
+      files,
+      async file => `https://images.blob.vercel-storage.com/${file.name}`,
+      async (url, file) => {
+        if (file.name === 'hanging-save.png') {
+          await withAbortableDeadline(
+            signal => new Promise(() => { signal.addEventListener('abort', () => {}); }),
+            { timeoutMs: 15, onTimeout: () => new ImageUploadError('save', 'Store save exceeded its deadline.') },
+          );
+        }
+        savedUrls.push(url);
+      },
+      value => progress.push(value),
+    ),
+    error => error instanceof ImageUploadError && error.stage === 'save' && error.fileName === 'hanging-save.png',
+  );
+
+  assert.deepEqual(savedUrls, ['https://images.blob.vercel-storage.com/saved-first.jpg']);
+  assert.equal(progress.includes(100), false);
+});
+
+test('activity cannot extend the hard end-to-end deadline', async () => {
+  let timeoutKind;
+
+  await assert.rejects(
+    withAbortableDeadline(async (signal, reportActivity) => {
+      const interval = setInterval(reportActivity, 2);
+      signal.addEventListener('abort', () => clearInterval(interval), { once: true });
+      return new Promise((_resolve, reject) => setTimeout(() => reject(new Error('unexpected completion')), 100));
+    }, { timeoutMs: 15, idleTimeoutMs: 8, onTimeout: kind => { timeoutKind = kind; return new Error(`deadline:${kind}`); } }),
+    /deadline:total/,
+  );
+
+  assert.equal(timeoutKind, 'total');
 });

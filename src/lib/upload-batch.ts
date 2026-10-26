@@ -1,6 +1,45 @@
 export type UploadProgressEvent = { loaded: number; total: number; percentage: number };
+export type UploadBatchContext = { index: number; total: number };
 
-export type UploadFailureStage = 'authentication' | 'token' | 'blob' | 'save';
+export type UploadFailureStage = 'authentication' | 'token' | 'blob' | 'confirmation' | 'save';
+
+export type DeadlineKind = 'idle' | 'total';
+
+/** Bounds an async stage even when its implementation ignores AbortSignal. */
+export async function withAbortableDeadline<Result>(
+  operation: (signal: AbortSignal, reportActivity: () => void) => Promise<Result>,
+  options: { timeoutMs: number; idleTimeoutMs?: number; onTimeout: (kind: DeadlineKind) => Error },
+): Promise<Result> {
+  const controller = new AbortController();
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let finished = false;
+  let rejectDeadline: ((error: Error) => void) | undefined;
+
+  const rejectOnTimeout = (kind: DeadlineKind) => {
+    if (finished) return;
+    finished = true;
+    controller.abort();
+    rejectDeadline?.(options.onTimeout(kind));
+  };
+  const reportActivity = () => {
+    if (finished || options.idleTimeoutMs === undefined) return;
+    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => rejectOnTimeout('idle'), options.idleTimeoutMs);
+  };
+
+  const deadline = new Promise<never>((_resolve, reject) => { rejectDeadline = reject; });
+  const totalTimer = setTimeout(() => rejectOnTimeout('total'), options.timeoutMs);
+  reportActivity();
+
+  try {
+    const running = Promise.resolve().then(() => operation(controller.signal, reportActivity));
+    return await Promise.race([running, deadline]);
+  } finally {
+    finished = true;
+    clearTimeout(totalTimer);
+    if (idleTimer !== undefined) clearTimeout(idleTimer);
+  }
+}
 
 export class ImageUploadError extends Error {
   readonly stage: UploadFailureStage;
@@ -37,11 +76,22 @@ export function appendOptionPhoto<OptionType extends { image?: string; images?: 
   return { ...option, images, image: images[0] || '' };
 }
 
+/** Retry persistence of an already-uploaded URL without transferring the file again. */
+export async function saveUploadedPhotoUrl<Result>(
+  url: string,
+  saveUrl: (url: string) => Promise<Result>,
+  onConfirmed: (result: Result) => void | Promise<void>,
+): Promise<Result> {
+  const result = await saveUrl(url);
+  await onConfirmed(result);
+  return result;
+}
+
 /** Upload files sequentially, reporting 100% only after every upload resolves. */
 export async function uploadFilesSequentially<FileType extends { size: number; name: string }>(
   files: FileType[],
   uploadFile: (file: FileType, onProgress: (event: UploadProgressEvent) => void) => Promise<string>,
-  onUploaded: (url: string, file: FileType) => void | Promise<void>,
+  onUploaded: (url: string, file: FileType, context: UploadBatchContext) => void | Promise<void>,
   onProgress: (percentage: number) => void,
 ) {
   if (!files.length) return;
@@ -54,7 +104,7 @@ export async function uploadFilesSequentially<FileType extends { size: number; n
     onProgress(lastReported);
   };
 
-  for (const file of files) {
+  for (const [index, file] of files.entries()) {
     try {
       const url = await uploadFile(file, event => {
         const loadedRatio = event.total > 0 ? event.loaded / event.total : event.percentage / 100;
@@ -62,7 +112,7 @@ export async function uploadFilesSequentially<FileType extends { size: number; n
         report(((completedBytes + loadedBytes) / Math.max(totalBytes, 1)) * 100);
       });
       if (!url) throw new ImageUploadError('blob', 'The storage service completed without returning an image URL.');
-      await onUploaded(url, file);
+      await onUploaded(url, file, { index, total: files.length });
       completedBytes += file.size;
       report((completedBytes / Math.max(totalBytes, 1)) * 100);
     } catch (error) {
