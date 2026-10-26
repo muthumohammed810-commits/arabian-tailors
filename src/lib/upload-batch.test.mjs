@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ImageUploadError, saveUploadedPhotoUrl, uploadFilesSequentially, withAbortableDeadline } from './upload-batch.ts';
+import { createUploadProgressActivityReporter, ImageUploadError, saveUploadedPhotoUrl, uploadFilesSequentially, withAbortableDeadline } from './upload-batch.ts';
 
 const completedProgress = { loaded: 10, total: 10, percentage: 100 };
 
@@ -200,4 +200,59 @@ test('activity cannot extend the hard end-to-end deadline', async () => {
   );
 
   assert.equal(timeoutKind, 'total');
+});
+
+test('unchanged Blob progress cannot keep the idle deadline alive', async () => {
+  let timeoutKind;
+  let wasAborted = false;
+
+  await assert.rejects(
+    withAbortableDeadline(async (signal, reportActivity) => {
+      const observeProgress = createUploadProgressActivityReporter(reportActivity);
+      const interval = setInterval(() => observeProgress({ loaded: 74 }), 2);
+      signal.addEventListener('abort', () => {
+        wasAborted = true;
+        clearInterval(interval);
+      }, { once: true });
+      return new Promise(() => {});
+    }, { timeoutMs: 80, idleTimeoutMs: 15, onTimeout: kind => { timeoutKind = kind; return new Error(`deadline:${kind}`); } }),
+    /deadline:idle/,
+  );
+
+  assert.equal(timeoutKind, 'idle');
+  assert.equal(wasAborted, true);
+});
+
+test('a Blob retry that restarts its byte count still counts as transfer activity', () => {
+  const activity = [];
+  const observeProgress = createUploadProgressActivityReporter(() => activity.push('active'));
+
+  for (const loaded of [0, 10, 10, 3, 7]) observeProgress({ loaded });
+
+  assert.equal(activity.length, 4);
+});
+
+test('forward Blob byte progress extends the idle deadline', async () => {
+  let timeoutKind;
+  let wasAborted = false;
+
+  await assert.rejects(
+    withAbortableDeadline(async (signal, reportActivity) => {
+      const observeProgress = createUploadProgressActivityReporter(reportActivity);
+      let loaded = 0;
+      const interval = setInterval(() => {
+        loaded += 1;
+        observeProgress({ loaded });
+      }, 3);
+      signal.addEventListener('abort', () => {
+        wasAborted = true;
+        clearInterval(interval);
+      }, { once: true });
+      return new Promise(() => {});
+    }, { timeoutMs: 60, idleTimeoutMs: 15, onTimeout: kind => { timeoutKind = kind; return new Error(`deadline:${kind}`); } }),
+    /deadline:total/,
+  );
+
+  assert.equal(timeoutKind, 'total');
+  assert.equal(wasAborted, true);
 });

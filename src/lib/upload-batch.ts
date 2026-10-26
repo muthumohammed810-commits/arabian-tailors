@@ -1,6 +1,17 @@
 export type UploadProgressEvent = { loaded: number; total: number; percentage: number };
 export type UploadBatchContext = { index: number; total: number };
 
+/** Reset the Blob idle deadline only when the SDK reports new bytes transferred. */
+export function createUploadProgressActivityReporter(reportActivity: () => void) {
+  let lastLoaded: number | undefined;
+  return (event: Pick<UploadProgressEvent, 'loaded'>) => {
+    if (Number.isFinite(event.loaded) && event.loaded !== lastLoaded) {
+      lastLoaded = event.loaded;
+      reportActivity();
+    }
+  };
+}
+
 export type UploadFailureStage = 'authentication' | 'token' | 'blob' | 'confirmation' | 'save';
 
 export type DeadlineKind = 'idle' | 'total';
