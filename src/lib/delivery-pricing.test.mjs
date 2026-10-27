@@ -31,6 +31,13 @@ test('same configured PIN quote supports both product families and does not add 
   assert.equal(quoteDelivery('110001', rules).status, 'unavailable');
 });
 
+test('PIN 676303 matches only an explicitly enabled configured exact-PIN rule', () => {
+  const fixtureOnlyRule = [{ id: 'test-fixture-only', area: 'Test fixture, not shop configuration', prefix: '676303', fee: 123, enabled: true }];
+  assert.deepEqual(quoteDelivery('676303', fixtureOnlyRule), { status: 'available', fee: 123, message: 'Delivery Fee: ₹123' });
+  assert.equal(quoteDelivery('676304', fixtureOnlyRule).status, 'unavailable');
+  assert.equal(quoteDelivery('676303', [{ ...fixtureOnlyRule[0], enabled: false }]).status, 'unavailable');
+});
+
 test('server total includes the confirmed delivery fee and UPI uses that exact total', () => {
   const subtotal = 2450;
   const quote = quoteDelivery('560001', [{ id: 'approved-area', prefix: '560', fee: 85, enabled: true }]);
