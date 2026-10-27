@@ -6,7 +6,7 @@ import { addDefaultCustomization } from '@/lib/customization-defaults';
 import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
 import { getCustomerOrderPaymentFields } from '@/lib/upi-order-policy';
 import { isAbayaReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
-import { calculateConfiguredSubtotal, quoteDelivery, type DeliveryRule } from '@/lib/delivery-pricing';
+import { calculateConfiguredSubtotal, calculateOrderTotal, quoteDelivery, type DeliveryRule } from '@/lib/delivery-pricing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -127,6 +127,7 @@ function validateSettings(value: any) {
       const prefixes = new Set<string>();
       if (!item.every((rule: any) => rule && typeof rule === 'object' && !Array.isArray(rule)
         && validText(rule.id, 100) && !ids.has(rule.id) && (ids.add(rule.id), true)
+        && (rule.area === undefined || validText(rule.area, 120))
         && typeof rule.prefix === 'string' && /^\d{3,6}$/.test(rule.prefix) && !prefixes.has(rule.prefix) && (prefixes.add(rule.prefix), true)
         && Number.isFinite(rule.fee) && rule.fee >= 0 && rule.fee <= 1_000_000
         && typeof rule.enabled === 'boolean')) return false;
@@ -302,7 +303,8 @@ export async function POST(request: Request) {
     const subtotal = pricing.subtotal;
     const deliveryFee = deliveryQuote.fee;
     const discount = 0;
-    const finalTotal = subtotal + deliveryFee - discount;
+    const finalTotal = calculateOrderTotal(subtotal, deliveryFee, discount);
+    if (finalTotal === null) return json({ error: 'The order total could not be calculated safely.' }, 400);
     if (Number(order.subtotal) !== subtotal || Number(order.deliveryFee) !== deliveryFee || Number(order.discount || 0) !== discount || Number(order.total) !== finalTotal) return json({ error: 'The price breakdown changed. Review the latest delivery fee and total before retrying.' }, 409);
     const clean = {
       id: order.id, customer: order.customer,

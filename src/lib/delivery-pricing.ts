@@ -1,17 +1,23 @@
-export type DeliveryRule = { id: string; prefix: string; fee: number; enabled: boolean };
+export type DeliveryRule = { id: string; area?: string; prefix: string; fee: number; enabled: boolean };
 export type DeliveryQuote =
   | { status: 'invalid'; fee: null; message: string }
   | { status: 'unavailable'; fee: null; message: string }
   | { status: 'available'; fee: number; message: string };
 
+/** Server-side payable total after the configured delivery fee and discount. */
+export function calculateOrderTotal(subtotal: number, deliveryFee: number, discount = 0): number | null {
+  if (![subtotal, deliveryFee, discount].every(Number.isFinite) || subtotal < 0 || deliveryFee < 0 || discount < 0 || discount > subtotal + deliveryFee) return null;
+  return Math.round((subtotal + deliveryFee - discount) * 100) / 100;
+}
+
 /** Resolve the most specific configured PIN prefix. No matching rule is never treated as free. */
 export function quoteDelivery(postal: string, rules: DeliveryRule[] = []): DeliveryQuote {
   const pin = String(postal || '').trim();
-  if (!/^\d{6}$/.test(pin)) return { status: 'invalid', fee: null, message: 'Enter a valid 6-digit PIN code to check delivery.' };
+  if (!/^[1-9]\d{5}$/.test(pin)) return { status: 'invalid', fee: null, message: 'Enter a valid 6-digit Indian PIN code to check delivery.' };
   const rule = rules
     .filter(item => item?.enabled === true && typeof item.prefix === 'string' && /^\d{3,6}$/.test(item.prefix) && pin.startsWith(item.prefix) && Number.isFinite(item.fee) && item.fee >= 0)
     .sort((a, b) => b.prefix.length - a.prefix.length)[0];
-  if (!rule) return { status: 'unavailable', fee: null, message: 'Delivery is not available for this PIN code. Please contact the atelier.' };
+  if (!rule) return { status: 'unavailable', fee: null, message: 'Delivery unavailable for this PIN code. Please contact the atelier.' };
   return { status: 'available', fee: Math.round(rule.fee), message: rule.fee === 0 ? 'Delivery Fee: FREE' : `Delivery Fee: ₹${Math.round(rule.fee).toLocaleString('en-IN')}` };
 }
 

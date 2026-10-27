@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateConfiguredSubtotal, quoteDelivery } from './delivery-pricing.ts';
+import { calculateConfiguredSubtotal, calculateOrderTotal, quoteDelivery } from './delivery-pricing.ts';
+import { createUpiPaymentUrl } from './upi-payment.ts';
 
 test('PIN rules choose the most specific configured prefix', () => {
   const rules = [
@@ -14,7 +15,31 @@ test('PIN rules choose the most specific configured prefix', () => {
 test('free delivery is explicit and unmatched/invalid PINs never invent a fee', () => {
   assert.deepEqual(quoteDelivery('560001', [{ id: 'free', prefix: '560', fee: 0, enabled: true }]), { status: 'available', fee: 0, message: 'Delivery Fee: FREE' });
   assert.equal(quoteDelivery('56001', []).status, 'invalid');
+  assert.equal(quoteDelivery('000001', [{ id: 'fake', prefix: '000', fee: 1, enabled: true }]).status, 'invalid');
+  assert.equal(quoteDelivery('560001', []).status, 'unavailable');
+  assert.equal(quoteDelivery('560001', [{ id: 'disabled', prefix: '560', fee: 75, enabled: false }]).status, 'unavailable');
   assert.equal(quoteDelivery('110001', [{ id: 'disabled', prefix: '110', fee: 0, enabled: false }]).status, 'unavailable');
+});
+
+test('same configured PIN quote supports both product families and does not add a fallback fee', () => {
+  const rules = [{ id: 'approved-area', area: 'Test area', prefix: '560', fee: 75, enabled: true }];
+  const abayaDelivery = quoteDelivery('560001', rules);
+  const kanduraDelivery = quoteDelivery('560999', rules);
+  assert.equal(abayaDelivery.fee, 75);
+  assert.equal(kanduraDelivery.fee, 75);
+  assert.equal(quoteDelivery('110001', rules).fee, null);
+  assert.equal(quoteDelivery('110001', rules).status, 'unavailable');
+});
+
+test('server total includes the confirmed delivery fee and UPI uses that exact total', () => {
+  const subtotal = 2450;
+  const quote = quoteDelivery('560001', [{ id: 'approved-area', prefix: '560', fee: 85, enabled: true }]);
+  assert.equal(quote.status, 'available');
+  const savedTotal = calculateOrderTotal(subtotal, quote.fee, 0);
+  assert.equal(savedTotal, 2535);
+  assert.equal(new URL(createUpiPaymentUrl('shop@upi', savedTotal, 'AT-123456')).searchParams.get('am'), '2535.00');
+  assert.equal(calculateOrderTotal(100, 20, 10), 110);
+  assert.equal(calculateOrderTotal(100, 20, 121), null);
 });
 
 test('server pricing uses saved model base and configured option prices', () => {
