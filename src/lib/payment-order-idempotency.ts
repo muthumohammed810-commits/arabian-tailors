@@ -8,6 +8,9 @@ export function isSameOrderIntent(existing: any, incoming: any) {
     && existing.productName === incoming.productName
     && existing.productImage === incoming.productImage
     && existing.basePrice === incoming.basePrice
+    && existing.subtotal === incoming.subtotal
+    && existing.deliveryFee === incoming.deliveryFee
+    && (existing.discount || 0) === (incoming.discount || 0)
     && existing.total === incoming.total
     && existing.paymentMethod === incoming.paymentMethod
     && JSON.stringify(existing.delivery) === JSON.stringify(incoming.delivery)

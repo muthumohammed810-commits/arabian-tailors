@@ -11,6 +11,7 @@ import { productImageSource } from '@/lib/product-image-url';
 import { upload } from '@vercel/blob/client';
 import { ABAYA_REFERENCE_PREFIX, getAbayaCustomerSteps, isAbayaReferenceUrl, validateAbayaReferenceFile } from '@/lib/abaya-customization';
 import { ImageUploadError, withAbortableDeadline } from '@/lib/upload-batch';
+import { quoteDelivery, type DeliveryRule } from '@/lib/delivery-pricing';
 
 type ManagedModelCategory = { visible?: boolean; required?: boolean; options: CustomizationOption[] };
 type ManagedModelStep = { id: string; title: string; description?: string; visible?: boolean; required?: boolean; options: CustomizationOption[] };
@@ -80,7 +81,7 @@ export default function Customize() {
   const [postal, setPostal] = useState('');
   const [orderId, setOrderId] = useState('');
   const [upiFallback, setUpiFallback] = useState(false);
-  const [paySettings, setPaySettings] = useState<Record<string, string>>({});
+  const [paySettings, setPaySettings] = useState<Record<string, any>>({});
   const [serviceStyles, setServiceStyles] = useState<TailoringStyle[]>(defaultStyles);
   const [serviceFabrics, setServiceFabrics] = useState<Fabric[]>(defaultFabrics);
   const [shopProducts, setShopProducts] = useState<StoreProduct[]>(initialShopProducts);
@@ -92,6 +93,8 @@ export default function Customize() {
   const [submitting, setSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [paymentStatus, setPaymentStatus] = useState('Pending verification');
+  const [confirmedTotal, setConfirmedTotal] = useState<number | null>(null);
+  const [confirmedBreakdown, setConfirmedBreakdown] = useState<{subtotal:number;deliveryFee:number;discount:number;total:number}|null>(null);
   const [abayaReferencePhoto, setAbayaReferencePhoto] = useState<AbayaReferencePhoto | null>(null);
   const [abayaReferenceDraft, setAbayaReferenceDraft] = useState<AbayaReferenceDraft | null>(null);
   const [abayaReferenceUploading, setAbayaReferenceUploading] = useState(false);
@@ -194,6 +197,10 @@ export default function Customize() {
   const currentFabric = serviceFabrics[fabric] || serviceFabrics[0] || defaultFabrics[0];
   const basePrice = selectedModelOption?.basePrice ?? (selectedProduct ? selectedProduct.price : configuredProduct?.price ?? currentStyle.price);
   const total = useMemo(() => Math.max(0, basePrice + (hasGarmentDefaults ? currentFabric.price : 0) + selectedOptionTotal + (hasGarmentDefaults && speed === 'urgent' ? 350 : 0)), [basePrice, currentFabric.price, selectedOptionTotal, speed, hasGarmentDefaults]);
+  const customizationCharges = total - basePrice;
+  const deliveryQuote = quoteDelivery(postal, Array.isArray(paySettings.deliveryRules) ? paySettings.deliveryRules as DeliveryRule[] : []);
+  const finalTotal = deliveryQuote.status === 'available' ? total + deliveryQuote.fee : null;
+  const runningTotal = confirmedBreakdown?.total ?? finalTotal ?? (step >= deliveryStep ? null : total);
   const titles = [...(hasProductIntro ? [`Choose your ${selectedProduct!.category.toLowerCase()}`] : hasGarmentDefaults ? ['Choose your style'] : []), ...(hasGarmentDefaults ? ['Select your fabric', 'Choose a colour', 'Your perfect fit'] : []), ...customSteps.map((item) => item.title), ...(showMeasurements ? ['Custom size / measurements'] : []), ...(hasTimingStep ? ['Tailoring speed'] : []), 'Review your design', 'Delivery details', 'UPI payment'];
 
   useEffect(() => {
@@ -270,7 +277,7 @@ export default function Customize() {
   function openUpiApp(orderRef: string) {
     setUpiFallback(false);
     const upiId = typeof paySettings.upiId === 'string' ? paySettings.upiId : '';
-    const paymentUrl = createUpiPaymentUrl(upiId, total, orderRef);
+    const paymentUrl = createUpiPaymentUrl(upiId, confirmedTotal ?? finalTotal ?? total, orderRef);
     if (!paymentUrl) { setUpiFallback(true); return; }
 
     let fallbackTimer: number;
@@ -307,14 +314,22 @@ export default function Customize() {
       ...(hasGarmentDefaults ? { fit, speed: hasTimingStep ? (speed === 'normal' ? 'Normal tailoring' : 'Priority tailoring') : 'Configured production options' } : {}),
       note,
     };
-    const order = pendingOrderRef.current || {
+    if (deliveryQuote.status !== 'available' || finalTotal === null) {
+      setCheckoutError(deliveryQuote.message);
+      setSubmitting(false);
+      return;
+    }
+    const order = {
       id,
       customer: name,
       initials: name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase(),
       product: hasGarmentDefaults ? `${productName} · ${color}` : isKandura ? [productName, selectedModelOption?.name, selectedColorOption?.name].filter(Boolean).join(' · ') : productName,
       ...(selectedProduct ? { productId: selectedProduct.id, productName: selectedProduct.name, productImage: selectedProduct.image, basePrice } : configuredProduct ? { productId: configuredProduct.id, productName, productImage: configuredProduct.image, basePrice } : {}),
       date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
-      total,
+      subtotal: total,
+      deliveryFee: deliveryQuote.fee,
+      discount: 0,
+      total: finalTotal,
       status: 'New',
       tone: 'sand',
       statusPayment: 'Pending verification',
@@ -328,7 +343,7 @@ export default function Customize() {
         ...(isAbaya && abayaReferencePhoto ? { customerReferencePhoto: { url: abayaReferencePhoto.url, fileName: abayaReferencePhoto.name, uploaded: true } } : {}),
         ...selectedOptions,
         ...(hasGarmentDefaults ? { fabricPrice: currentFabric.price, priorityPrice: hasTimingStep && speed === 'urgent' ? 350 : 0 } : {}),
-        total,
+        subtotal: total,
       },
     };
     pendingOrderRef.current = order;
@@ -336,11 +351,13 @@ export default function Customize() {
     try {
       const response = await fetch('/api/store-data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(order) });
       const saved = await response.json().catch(() => null);
-      if (!response.ok || saved?.ok !== true || saved?.orderId !== id || !['Pending verification', 'Paid', 'Failed', 'Refunded'].includes(saved?.statusPayment)) {
+      if (!response.ok || saved?.ok !== true || saved?.orderId !== id || !['Pending verification', 'Paid', 'Failed', 'Refunded'].includes(saved?.statusPayment) || saved?.subtotal !== total || saved?.deliveryFee !== deliveryQuote.fee || saved?.total !== finalTotal) {
         throw new Error(saved?.error || 'The atelier could not confirm the pending order save. Your selections are still here; retry safely.');
       }
       setOrderId(saved.orderId);
       setPaymentStatus(saved.statusPayment);
+      setConfirmedTotal(saved.total);
+      setConfirmedBreakdown({subtotal:saved.subtotal,deliveryFee:saved.deliveryFee,discount:saved.discount||0,total:saved.total});
       setStep(paymentStep);
     } catch (error) {
       setCheckoutError(error instanceof Error ? error.message : 'The atelier could not confirm the pending order save. Your selections are still here; retry safely.');
@@ -462,12 +479,13 @@ export default function Customize() {
 
             {hasTimingStep && step === timingStep && <><h2 className="serif customizer-step-title">Choose your timing</h2><p className="subtle">We’ll confirm an estimated completion date before payment.</p><div className="timing-choices">{[{ id: 'normal', name: 'Normal tailoring', desc: 'Our considered standard schedule', fee: 0 }, { id: 'urgent', name: 'Priority tailoring', desc: 'Subject to atelier availability', fee: 350 }].map((item) => <button key={item.id} className={speed === item.id ? 'selected' : ''} onClick={() => setSpeed(item.id)}><span className="eyebrow">{item.fee ? 'Priority' : 'Standard'}</span><b className="serif">{item.name}</b><span className="subtle">{item.desc}</span><span>{item.fee ? `+ ₹${item.fee}` : 'Included'}</span></button>)}</div><label className="subtle customizer-note">A note for your tailor<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} placeholder="Share a fit preference or helpful detail…" rows={3} /></label></>}
 
-            {step === reviewStep && <><h2 className="serif customizer-step-title">Your design, at a glance.</h2><p className="subtle">Review your choices before continuing.</p><div className="design-review">{[['Garment', selectedProduct?.name || configuredProduct?.name || `${currentStyle.name} Kandura`], ...(selectedProductOption ? [['Option', selectedProductOption]] : []), ...customSteps.map(item => [item.title, customSelections[item.id]?.name || (item.required===true?'Not selected':'Not selected (optional)')]), ...(isAbaya && abayaReferencePhoto ? [['Reference photo', abayaReferencePhoto.name]] : []), ...(measurementsEnabled && measurementFields.length ? [['Custom measurements', measurementFields.filter(field=>measurements[field.id]?.trim()).map(field=>`${field.name}: ${measurements[field.id]} ${field.unit}`).join(', ') || 'Not entered']] : []), ...(hasGarmentDefaults ? [['Fabric', currentFabric.name], ['Colour', color], ['Fit', sizing === 'standard' ? `Standard · ${size}` : `Custom measurements (${unit})`], ['Timing', speed === 'normal' ? 'Standard tailoring' : 'Priority tailoring']] : [])].map(([label, value]) => <div key={label}><span className="subtle">{label}</span><span>{value}</span></div>)}</div><label className="subtle customizer-note">A note for your tailor<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} placeholder="Share a fit preference or helpful detail…" rows={3} /></label><div className="price-estimate"><div className="eyebrow">Price estimate · INR</div>{selectedProduct && <div className="price-estimate-row"><span className="subtle">{selectedProduct.name} · base</span><span>₹{selectedProduct.price.toLocaleString('en-IN')}</span></div>}{hasGarmentDefaults&&<div className="price-estimate-row"><span className="subtle">Fabric · {currentFabric.name}</span><span>₹{currentFabric.price.toLocaleString('en-IN')}</span></div>}{isKandura && !selectedProduct && <div className="price-estimate-row"><span className="subtle">{currentStyle.name} tailoring</span><span>₹{currentStyle.price.toLocaleString('en-IN')}</span></div>}{customSteps.map(item => customSelections[item.id]?.priceAdjustment ? <div className="price-estimate-row" key={item.id}><span className="subtle">{item.title} · {customSelections[item.id].name}</span><span>{customSelections[item.id].priceAdjustment! > 0 ? ' + ' : ' − '}₹{Math.abs(customSelections[item.id].priceAdjustment!).toLocaleString('en-IN')}</span></div> : null)}{hasGarmentDefaults && speed === 'urgent' && <div className="price-estimate-row"><span className="subtle">Priority tailoring estimate</span><span>₹350</span></div>}<div className="price-estimate-total"><span>Total estimate</span><b className="gold">₹{total.toLocaleString('en-IN')}</b></div><p className="subtle">Illustrative pricing. Final price and availability must be confirmed by the atelier.</p></div><div className="customizer-notice"><ShieldCheck size={15} className="gold" />After placing a custom {garmentLabel} order, the design cannot be changed or cancelled. Payment is required before tailoring begins.</div></>}
+            {step === reviewStep && <><h2 className="serif customizer-step-title">Your design, at a glance.</h2><p className="subtle">Review your choices before continuing.</p><div className="design-review">{[['Garment', selectedProduct?.name || configuredProduct?.name || `${currentStyle.name} Kandura`], ...(selectedProductOption ? [['Option', selectedProductOption]] : []), ...customSteps.map(item => [item.title, customSelections[item.id]?.name || (item.required===true?'Not selected':'Not selected (optional)')]), ...(isAbaya && abayaReferencePhoto ? [['Reference photo', abayaReferencePhoto.name]] : []), ...(measurementsEnabled && measurementFields.length ? [['Custom measurements', measurementFields.filter(field=>measurements[field.id]?.trim()).map(field=>`${field.name}: ${measurements[field.id]} ${field.unit}`).join(', ') || 'Not entered']] : []), ...(hasGarmentDefaults ? [['Fabric', currentFabric.name], ['Colour', color], ['Fit', sizing === 'standard' ? `Standard · ${size}` : `Custom measurements (${unit})`], ['Timing', speed === 'normal' ? 'Standard tailoring' : 'Priority tailoring']] : [])].map(([label, value]) => <div key={label}><span className="subtle">{label}</span><span>{value}</span></div>)}</div><label className="subtle customizer-note">A note for your tailor<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} placeholder="Share a fit preference or helpful detail…" rows={3} /></label><div className="price-estimate"><div className="eyebrow">Price estimate · INR</div>{selectedProduct && <div className="price-estimate-row"><span className="subtle">{selectedProduct.name} · base</span><span>₹{basePrice.toLocaleString('en-IN')}</span></div>}{hasGarmentDefaults&&<div className="price-estimate-row"><span className="subtle">Fabric · {currentFabric.name}</span><span>₹{currentFabric.price.toLocaleString('en-IN')}</span></div>}{isKandura && !selectedProduct && <div className="price-estimate-row"><span className="subtle">{currentStyle.name} tailoring</span><span>₹{currentStyle.price.toLocaleString('en-IN')}</span></div>}{customSteps.map(item => customSelections[item.id]?.priceAdjustment ? <div className="price-estimate-row" key={item.id}><span className="subtle">{item.title} · {customSelections[item.id].name}</span><span>{customSelections[item.id].priceAdjustment! > 0 ? ' + ' : ' − '}₹{Math.abs(customSelections[item.id].priceAdjustment!).toLocaleString('en-IN')}</span></div> : null)}{hasGarmentDefaults && speed === 'urgent' && <div className="price-estimate-row"><span className="subtle">Priority tailoring estimate</span><span>₹350</span></div>}<div className="price-estimate-total"><span>Total estimate</span><b className="gold">₹{total.toLocaleString('en-IN')}</b></div><p className="subtle">Delivery fee is calculated from your PIN code on the next step. Final total is confirmed before UPI.</p></div><div className="customizer-notice"><ShieldCheck size={15} className="gold" />After placing a custom {garmentLabel} order, the design cannot be changed or cancelled. Payment is required before tailoring begins.</div></>}
 
             {step === deliveryStep && <>
               <h2 className="serif customizer-step-title">Delivery details</h2>
               <p className="subtle">Enter delivery details first. Your order is saved as pending payment before the UPI payment screen opens.</p>
-              <div className="delivery-fields">{[['Full name', name, setName, 'text'], ['Email address', email, setEmail, 'email'], ['Mobile number', phone, setPhone, 'tel'], ['Postal code', postal, setPostal, 'text'], ['City', city, setCity, 'text'], ['Delivery address', address, setAddress, 'text']].map(([label, value, setter, inputType]: any) => <label key={label} className="subtle">{label}<input required type={inputType} value={value} onChange={(event) => setter(event.target.value)} placeholder={label} disabled={submitting} /></label>)}</div>
+              <div className="delivery-fields">{[['Full name', name, setName, 'text'], ['Email address', email, setEmail, 'email'], ['Mobile number', phone, setPhone, 'tel'], ['Postal code', postal, setPostal, 'text'], ['City', city, setCity, 'text'], ['Delivery address', address, setAddress, 'text']].map(([label, value, setter, inputType]: any) => <label key={label} className="subtle">{label}<input required type={inputType} inputMode={label==='Postal code'?'numeric':undefined} maxLength={label==='Postal code'?6:undefined} value={value} onChange={(event) => setter(label==='Postal code'?event.target.value.replace(/\D/g,'').slice(0,6):event.target.value)} placeholder={label} disabled={submitting} /></label>)}</div>
+              <section className="checkout-price-breakdown" aria-live="polite"><div className="eyebrow">Order total · INR</div><div className="checkout-price-row"><span>{selectedProduct?.name || configuredProduct?.name || 'Product'} price</span><b>₹{basePrice.toLocaleString('en-IN')}</b></div><div className="checkout-price-row"><span>Customization charges</span><b>{customizationCharges<0?'− ':''}₹{Math.abs(customizationCharges).toLocaleString('en-IN')}</b></div><div className="checkout-price-row checkout-delivery-row"><span>Delivery Fee</span><b>{deliveryQuote.status==='available'?(deliveryQuote.fee===0?'FREE':`₹${deliveryQuote.fee.toLocaleString('en-IN')}`):'—'}</b></div><div className="checkout-price-row"><span>Discount</span><b>₹0</b></div><div className="checkout-final-total"><span>Final Total</span><b>{finalTotal===null?'—':`₹${finalTotal.toLocaleString('en-IN')}`}</b></div><p className={deliveryQuote.status==='available'?'subtle':'checkout-delivery-error'} role={deliveryQuote.status==='available'?'status':'alert'}>{deliveryQuote.message}</p></section>
               {!paySettings.upiId && !paySettings.qr && <p role="alert" className="checkout-error">UPI payment details are not configured yet. The atelier must add its merchant UPI ID or QR code in Admin before checkout can continue.</p>}
               <div className="payment-security"><LockKeyhole size={14} className="gold" />UPI only. Payment status remains pending until the shop verifies receipt in its merchant UPI app.</div>
             </>}
@@ -477,12 +495,12 @@ export default function Customize() {
               <p className="subtle">Your order is saved. Payment status · <b>{paymentStatus}</b>. Use the shop’s configured UPI details below. Returning from an app does not confirm payment.</p>
               <section className="payment-order-summary">
                 <div className="eyebrow">Order summary · {selectedProduct?.category || 'Kandura'}</div>
-                <div className="payment-order-product"><span>{selectedProduct?.name || configuredProduct?.name || `${currentStyle.name} Kandura`}</span><b>₹{total.toLocaleString('en-IN')}</b></div>
+                <div className="payment-order-product"><span>{selectedProduct?.name || configuredProduct?.name || `${currentStyle.name} Kandura`}</span><b>₹{basePrice.toLocaleString('en-IN')}</b></div>
                 {selectedModelOption && <div className="subtle">Model · {selectedModelOption.name}</div>}
                 {customSteps.filter(item => customSelections[item.id]).map(item => <div className="subtle" key={item.id}>{item.title} · {customSelections[item.id].name}{customSelections[item.id].priceAdjustment ? ` · ${customSelections[item.id].priceAdjustment! > 0 ? '+' : '−'}₹${Math.abs(customSelections[item.id].priceAdjustment!).toLocaleString('en-IN')}` : ''}</div>)}
                 {hasGarmentDefaults && <><div className="subtle">Fabric · {currentFabric.name} · Colour · {color}</div><div className="subtle">Fit · {sizing === 'standard' ? `Standard · ${size}` : `Custom measurements (${unit})`} · {speed === 'normal' ? 'Standard production' : 'Priority production'}</div></>}
                 {Object.entries(measurements).filter(([, value]) => value.trim()).map(([key, value]) => <div className="subtle" key={key}>Measurement · {key} {value} {unit}</div>)}
-                <div className="payment-order-total"><span>Amount to pay</span><b className="gold">₹{total.toLocaleString('en-IN')}</b></div>
+                <div className="checkout-price-row"><span>Product price</span><b>₹{basePrice.toLocaleString('en-IN')}</b></div><div className="checkout-price-row"><span>Customization charges</span><b>{customizationCharges<0?'− ':''}₹{Math.abs(customizationCharges).toLocaleString('en-IN')}</b></div><div className="checkout-price-row checkout-delivery-row"><span>Delivery Fee</span><b>{confirmedBreakdown?(confirmedBreakdown.deliveryFee===0?'FREE':`₹${confirmedBreakdown.deliveryFee.toLocaleString('en-IN')}`):deliveryQuote.status==='available'?(deliveryQuote.fee===0?'FREE':`₹${deliveryQuote.fee.toLocaleString('en-IN')}`):'—'}</b></div><div className="checkout-price-row"><span>Discount</span><b>₹{(confirmedBreakdown?.discount??0).toLocaleString('en-IN')}</b></div><div className="payment-order-total"><span>Final Total · Amount to pay</span><b className="gold">₹{(confirmedBreakdown?.total??confirmedTotal??finalTotal??total).toLocaleString('en-IN')}</b></div>
                 <div className="subtle">Order reference · <b>{orderId}</b></div>
                 <small className="subtle">Final tailoring price remains subject to atelier confirmation.</small>
               </section>
@@ -499,11 +517,11 @@ export default function Customize() {
             </>}
           </div>
 
-          <aside className="customizer-summary"><div className="eyebrow">Your running estimate</div><div className="serif customizer-total">₹{total.toLocaleString('en-IN')}</div><div className="subtle">{selectedProduct ? <>{selectedProduct.name} ₹{selectedProduct.price.toLocaleString('en-IN')}<br /></> : null}{hasGarmentDefaults&&<>Fabric ₹{currentFabric.price.toLocaleString('en-IN')}</>}{isKandura && !selectedProduct && <><br />Tailoring ₹{currentStyle.price.toLocaleString('en-IN')}</>}{hasGarmentDefaults && speed === 'urgent' && <><br />Priority ₹350</>}</div><div className="summary-separator"><Scissors size={14} className="gold" />Made to your choices</div><p className="subtle">Estimate only. Final price and availability confirmed by the atelier.</p></aside>
+          <aside className="customizer-summary"><div className="eyebrow">{step>=deliveryStep?'Final total':'Your running estimate'}</div><div className="serif customizer-total">{runningTotal===null?'—':`₹${runningTotal.toLocaleString('en-IN')}`}</div><div className="subtle">{selectedProduct ? <>{selectedProduct.name} ₹{selectedProduct.price.toLocaleString('en-IN')}<br /></> : null}{hasGarmentDefaults&&<>Fabric ₹{currentFabric.price.toLocaleString('en-IN')}</>}{isKandura && !selectedProduct && <><br />Tailoring ₹{currentStyle.price.toLocaleString('en-IN')}</>}{hasGarmentDefaults && speed === 'urgent' && <><br />Priority ₹350</>}{step>=deliveryStep&&<><br/>Delivery Fee · {confirmedBreakdown?(confirmedBreakdown.deliveryFee===0?'FREE':`₹${confirmedBreakdown.deliveryFee.toLocaleString('en-IN')}`):deliveryQuote.status==='available'?(deliveryQuote.fee===0?'FREE':`₹${deliveryQuote.fee.toLocaleString('en-IN')}`):'Unavailable'}</>}</div><div className="summary-separator"><Scissors size={14} className="gold" />Made to your choices</div><p className="subtle">{step>=deliveryStep?'UPI amount matches the saved order total.':'Delivery fee is calculated after you enter your PIN code.'}</p></aside>
         </section>
 
         {step === deliveryStep && checkoutError && <p role="alert" className="checkout-error">{checkoutError} You can retry; the same order reference is reused to prevent duplicates.</p>}
-        {step < paymentStep && <div className="customizer-nav"><button className="btn btn-outline" onClick={() => setStep((value) => Math.max(0, value - 1))} disabled={step === 0 || submitting || Boolean(pendingOrderRef.current)}><ArrowLeft size={14} /> Back</button>{step === deliveryStep ? <button className="btn" onClick={next} disabled={!name || !email || !phone || !address || !city || !postal || (!paySettings.upiId && !paySettings.qr) || total <= 0 || submitting}>{submitting ? 'Saving pending order…' : <>Save order &amp; continue to UPI · ₹{total.toLocaleString('en-IN')} <ArrowRight size={14} /></>}</button> : <button className="btn" onClick={next} disabled={requiredSelectionMissing || missingCustomMeasurements}>{step === 0 && selectedProduct ? 'Order Now' : step === reviewStep ? 'Continue to delivery' : 'Continue'} <ArrowRight size={14} /></button>}</div>}
+        {step < paymentStep && <div className="customizer-nav"><button className="btn btn-outline" onClick={() => setStep((value) => Math.max(0, value - 1))} disabled={step === 0 || submitting || Boolean(pendingOrderRef.current)}><ArrowLeft size={14} /> Back</button>{step === deliveryStep ? <button className="btn" onClick={next} disabled={!name || !email || !phone || !address || !city || deliveryQuote.status!=='available' || (!paySettings.upiId && !paySettings.qr) || total <= 0 || submitting}>{submitting ? 'Saving pending order…' : <>Save order &amp; continue to UPI · {finalTotal===null?'Check delivery':`₹${finalTotal.toLocaleString('en-IN')}`} <ArrowRight size={14} /></>}</button> : <button className="btn" onClick={next} disabled={requiredSelectionMissing || missingCustomMeasurements}>{step === 0 && selectedProduct ? 'Order Now' : step === reviewStep ? 'Continue to delivery' : 'Continue'} <ArrowRight size={14} /></button>}</div>}
       </div>
 
       <footer className="footer"><div className="wrap customizer-footer"><span>ARABIAN TAILORS · INDIA</span><span>Elegance, Tailored for You</span></div></footer>

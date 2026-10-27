@@ -6,6 +6,7 @@ import { addDefaultCustomization } from '@/lib/customization-defaults';
 import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
 import { getCustomerOrderPaymentFields } from '@/lib/upi-order-policy';
 import { isAbayaReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
+import { calculateConfiguredSubtotal, quoteDelivery, type DeliveryRule } from '@/lib/delivery-pricing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -110,7 +111,7 @@ function safePayment(order: any) {
     ...(order.productName ? { productName: order.productName } : {}),
     ...(order.productImage ? { productImage: order.productImage } : {}),
     ...(Number.isFinite(order.basePrice) ? { basePrice: order.basePrice } : {}),
-    date: order.date, total: order.total, status: order.status, tone: order.tone,
+    date: order.date, total: order.total, subtotal: order.subtotal, deliveryFee: order.deliveryFee, discount: order.discount, status: order.status, tone: order.tone,
     delivery: order.delivery, design: order.design,
     paymentMethod: ['upi','card','cod'].includes(order.paymentMethod) ? order.paymentMethod : 'Not provided',
     statusPayment: paymentStatuses.includes(order.statusPayment) ? order.statusPayment : 'Pending verification',
@@ -118,8 +119,22 @@ function safePayment(order: any) {
 }
 function validEmail(value: unknown): value is string { return typeof value === 'string' && validText(value, 254) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value); }
 function validateSettings(value: any) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.entries(value).every(([key, v]) => ['storeName','gold','background','heroImage','upiId','accountName','accountNumber','ifsc','bankName','qr'].includes(key) && typeof v === 'string' && v.length <= 2_000_000);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'deliveryRules') {
+      if (!Array.isArray(item) || item.length > 500) return false;
+      const ids = new Set<string>();
+      const prefixes = new Set<string>();
+      if (!item.every((rule: any) => rule && typeof rule === 'object' && !Array.isArray(rule)
+        && validText(rule.id, 100) && !ids.has(rule.id) && (ids.add(rule.id), true)
+        && typeof rule.prefix === 'string' && /^\d{3,6}$/.test(rule.prefix) && !prefixes.has(rule.prefix) && (prefixes.add(rule.prefix), true)
+        && Number.isFinite(rule.fee) && rule.fee >= 0 && rule.fee <= 1_000_000
+        && typeof rule.enabled === 'boolean')) return false;
+      continue;
+    }
+    if (!['storeName','gold','background','heroImage','upiId','accountName','accountNumber','ifsc','bankName','qr'].includes(key) || typeof item !== 'string' || item.length > 2_000_000) return false;
+  }
+  return true;
 }
 function isVercelBlobUrl(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 2000) return false;
@@ -275,13 +290,27 @@ export async function POST(request: Request) {
   if (order.design?.customerReferencePhoto !== undefined && (!isAbayaReferencePhotoForOrder(order.design, order.id) || !referencePhotoUrl)) return json({ error: 'The customer reference photo does not match this Abaya order.' }, 400);
   if (order.productId !== undefined && (!validText(order.productId, 100) || !validText(order.productName, 160) || (order.productImage !== undefined && (typeof order.productImage !== 'string' || order.productImage.length > 2000)) || !Number.isFinite(order.basePrice) || order.basePrice < 0)) return json({ error: 'Invalid product details.' }, 400);
   try {
+    const store = await readStore();
+    addDefaultCustomization(store);
+    const product = store.products.find((item: any) => item.id === order.productId);
+    if (!product || product.available === false) return json({ error: 'This product is not currently available. Refresh the page and try again.' }, 409);
+    const pricing = calculateConfiguredSubtotal(product, order.design, store.products.filter((item: any) => String(item.category || '').toLowerCase() === 'fabric'));
+    if (!pricing.ok) return json({ error: pricing.error }, 400);
+    if (Number(order.basePrice) !== pricing.basePrice) return json({ error: 'The product price changed. Refresh your choices before placing the order.' }, 409);
+    const deliveryQuote = quoteDelivery(order.delivery.postal, (Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) as DeliveryRule[]);
+    if (deliveryQuote.status !== 'available') return json({ error: deliveryQuote.message }, 400);
+    const subtotal = pricing.subtotal;
+    const deliveryFee = deliveryQuote.fee;
+    const discount = 0;
+    const finalTotal = subtotal + deliveryFee - discount;
+    if (Number(order.subtotal) !== subtotal || Number(order.deliveryFee) !== deliveryFee || Number(order.discount || 0) !== discount || Number(order.total) !== finalTotal) return json({ error: 'The price breakdown changed. Review the latest delivery fee and total before retrying.' }, 409);
     const clean = {
       id: order.id, customer: order.customer,
       initials: order.initials || order.customer.split(/\s+/).map((part: string) => part[0]).join('').slice(0, 2).toUpperCase(),
       product: order.product,
       ...(order.productId ? { productId: order.productId, productName: order.productName, productImage: order.productImage || '', basePrice: order.basePrice } : {}),
       date: order.date || new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
-      total: order.total, status: order.status, tone: order.tone || 'sand',
+      subtotal, deliveryFee, discount, total: finalTotal, status: order.status, tone: order.tone || 'sand',
       ...paymentFields,
       delivery: order.delivery, design: order.design,
       createdAt: typeof order.createdAt === 'string' ? order.createdAt : new Date().toISOString(),
@@ -289,7 +318,7 @@ export async function POST(request: Request) {
     const pathname = `${ORDER_PREFIX}${clean.id}.json`;
     const existing = await readBlob(pathname);
     if (existing) {
-      if (isSameOrderIntent(existing, clean)) return json({ ok: true, orderId: clean.id, statusPayment: existing.statusPayment || 'Pending verification', alreadySaved: true }, 200);
+      if (isSameOrderIntent(existing, clean)) return json({ ok: true, orderId: clean.id, statusPayment: existing.statusPayment || 'Pending verification', subtotal: existing.subtotal, deliveryFee: existing.deliveryFee, discount: existing.discount || 0, total: existing.total, alreadySaved: true }, 200);
       return json({ error: 'This order reference is already in use. Please contact the atelier before retrying.' }, 409);
     }
     try {
@@ -297,10 +326,10 @@ export async function POST(request: Request) {
     } catch (writeError) {
       // A concurrent request may have saved the same reference after our read.
       const racedOrder = await readBlob(pathname);
-      if (racedOrder && isSameOrderIntent(racedOrder, clean)) return json({ ok: true, orderId: clean.id, statusPayment: racedOrder.statusPayment || 'Pending verification', alreadySaved: true }, 200);
+      if (racedOrder && isSameOrderIntent(racedOrder, clean)) return json({ ok: true, orderId: clean.id, statusPayment: racedOrder.statusPayment || 'Pending verification', subtotal: racedOrder.subtotal, deliveryFee: racedOrder.deliveryFee, discount: racedOrder.discount || 0, total: racedOrder.total, alreadySaved: true }, 200);
       throw writeError;
     }
-    return json({ ok: true, orderId: clean.id, statusPayment: 'Pending verification' }, 201);
+    return json({ ok: true, orderId: clean.id, statusPayment: 'Pending verification', subtotal, deliveryFee, discount, total: finalTotal }, 201);
   } catch (error) {
     logOrderWriteFailure(order.id, error);
     return json({ error: 'Could not save order.' }, 500);
