@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, ArrowUpRight, Menu, X, ChevronLeft, ChevronRight, Plus, Minus, Star } from 'lucide-react';
 import { products as catalogProducts, styles as tailoringStyles, type Product } from '@/lib/catalog';
 import { GarmentVisual } from '@/components/garment-visual';
+import { productImageSource } from '@/lib/product-image-url';
 
 type StoreProduct = Product & { images?: string[]; available?: boolean; stock?: number; stitchingType?: string; customizationSteps?: { id: string; title: string; description?: string; required?: boolean; available?: boolean; options: { id: string; name: string; description?: string; image?: string; priceAdjustment?: number; available?: boolean }[] }[] };
 type Category = 'All' | 'Abaya' | 'Kandura' | 'Fabrics' | 'Stitching' | 'Custom Design';
@@ -156,7 +157,7 @@ export default function Home() {
               <div className="product-rail" ref={railRef} onScroll={updateActiveSlide}>
                 {cards.map((card) => <article className={`product-card editorial-card ${expandedCard === card.id ? 'expanded' : ''}`} key={card.id}>
                   <Link href={card.href} className="product-visual" aria-label={`View ${card.name}`}>
-                    {card.garmentKind ? <GarmentVisual kind={card.garmentKind} className="product-garment-visual" /> : card.category.toLowerCase() === 'fabric' ? <div className="product-img fabric-visual" aria-hidden="true" /> : <div className="product-img" style={{ backgroundImage: `url('${card.image}')` }} />}
+                    {card.garmentKind ? <GarmentVisual kind={card.garmentKind} className="product-garment-visual" /> : card.category.toLowerCase() === 'fabric' ? <div className="product-img fabric-visual" aria-hidden="true" /> : <div className="product-img" style={{ backgroundImage: `url('${productImageSource(card.image)}')` }} />}
                     {card.tag && <span className="tag">{card.tag}</span>}
                     {products.find((product) => product.id === card.id)?.available === false && <span className="availability-tag">Unavailable</span>}
                     <span className="product-visual-mark"><ArrowUpRight size={16}/></span>

@@ -7,6 +7,7 @@ import { fabrics as defaultFabrics, products as defaultProducts, styles as defau
 import { GarmentVisual } from '@/components/garment-visual';
 import { createUpiPaymentUrl } from '@/lib/upi-payment';
 import { customizationDefaults, defaultMeasurements } from '@/lib/customization-defaults';
+import { productImageSource } from '@/lib/product-image-url';
 
 type ManagedModelCategory = { visible?: boolean; required?: boolean; options: CustomizationOption[] };
 type ManagedModelStep = { id: string; title: string; description?: string; visible?: boolean; required?: boolean; options: CustomizationOption[] };
@@ -52,7 +53,7 @@ function CustomOptionImage({ src, name, fallbackColor, modelCard = false }: { sr
     if (modelCard) return <span className="dynamic-option-fallback model-photo-fallback" role="img" aria-label={`${name} photo not uploaded`}><span>Model photo not uploaded</span></span>;
     return fallbackColor ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: fallbackColor }} aria-label={`${name} swatch`} /> : null;
   }
-  return <img className="dynamic-option-image" src={src} alt={`${name}`} onError={() => setFailed(true)} />;
+  return <img className="dynamic-option-image" src={productImageSource(src)} alt={`${name}`} onError={() => setFailed(true)} />;
 }
 
 export default function Customize() {
@@ -292,14 +293,14 @@ export default function Customize() {
                 <h2 className="serif customizer-step-title">Select your {selectedProduct!.category}</h2>
                 <p className="subtle">Your chosen piece, ready to make personal. Continue through the same made-to-measure checkout used for Kanduras.</p>
                 <div className="selected-garment-card">
-                  <div className="selected-garment-visual">{selectedProduct!.images?.length?<div className="product-image-gallery">{selectedProduct!.images.map((image,index)=><img key={`${image}-${index}`} src={image} alt={`${selectedProduct!.name} image ${index+1}`}/>)}</div>:selectedProduct!.image?<img src={selectedProduct!.image} alt={selectedProduct!.name}/>:isAbaya?<GarmentVisual kind="abaya"/>:null}</div>
+                  <div className="selected-garment-visual">{selectedProduct!.images?.length?<div className="product-image-gallery">{selectedProduct!.images.map((image,index)=><img key={`${image}-${index}`} src={productImageSource(image)} alt={`${selectedProduct!.name} image ${index+1}`}/>)}</div>:selectedProduct!.image?<img src={productImageSource(selectedProduct!.image)} alt={selectedProduct!.name}/>:isAbaya?<GarmentVisual kind="abaya"/>:null}</div>
                   <div><span className="eyebrow">{selectedProduct!.category}</span><h3 className="serif">{selectedProduct!.name}</h3><p className="subtle">{selectedProduct!.description}</p><span className="gold">Base price · ₹{selectedProduct!.price.toLocaleString('en-IN')}</span>{selectedProduct!.options?.length ? <label className="subtle abaya-option-select">Available option<select value={activeProductOption} onChange={(event) => setSelectedProductOption(event.target.value)}>{selectedProduct!.options.map((option) => <option key={option}>{option}</option>)}</select></label> : null}</div>
                 </div>
               </>
             ) : hasGarmentDefaults && step === 0 ? (
               <>
                 <h2 className="serif customizer-step-title">Select a silhouette</h2><p className="subtle">Each style carries its own character and tailoring details.</p>
-                <div className="product-grid customize-style-grid">{serviceStyles.map((item) => <button key={item.id} className={`customizer-choice ${style === item.id ? 'selected' : ''}`} onClick={() => { setStyle(item.id); setSelectedProductOption(''); setCustomSelections({}); }}><div className="customizer-choice-image" style={{ backgroundImage: `url('${item.image}')` }} /><div className="customizer-choice-copy"><span className="serif">{item.name}</span><span className="subtle">{item.desc}</span><b className="gold">Tailoring ₹{item.price.toLocaleString('en-IN')}</b></div></button>)}</div>{configuredProduct?.options?.length ? <label className="subtle abaya-option-select">Available option<select value={activeProductOption} onChange={(event) => setSelectedProductOption(event.target.value)}>{configuredProduct.options.map((option) => <option key={option}>{option}</option>)}</select></label> : null}
+                <div className="product-grid customize-style-grid">{serviceStyles.map((item) => <button key={item.id} className={`customizer-choice ${style === item.id ? 'selected' : ''}`} onClick={() => { setStyle(item.id); setSelectedProductOption(''); setCustomSelections({}); }}><div className="customizer-choice-image" style={{ backgroundImage: `url('${productImageSource(item.image)}')` }} /><div className="customizer-choice-copy"><span className="serif">{item.name}</span><span className="subtle">{item.desc}</span><b className="gold">Tailoring ₹{item.price.toLocaleString('en-IN')}</b></div></button>)}</div>{configuredProduct?.options?.length ? <label className="subtle abaya-option-select">Available option<select value={activeProductOption} onChange={(event) => setSelectedProductOption(event.target.value)}>{configuredProduct.options.map((option) => <option key={option}>{option}</option>)}</select></label> : null}
               </>
             ) : null}
 
@@ -314,7 +315,7 @@ export default function Customize() {
               const isModelStep = /model/i.test(item.title);
               const showCustomMeasurements = needsCustomMeasurements && customOptionMeasurements.length > 0;
               return <>
-                {hasModelStep && step === 0 && configuredProduct?.images?.length ? <div className="product-image-gallery">{configuredProduct.images.map((image, index) => <img key={`${image}-${index}`} src={image} alt={`${configuredProduct.name} image ${index + 1}`} />)}</div> : null}
+                {hasModelStep && step === 0 && configuredProduct?.images?.length ? <div className="product-image-gallery">{configuredProduct.images.map((image, index) => <img key={`${image}-${index}`} src={productImageSource(image)} alt={`${configuredProduct.name} image ${index + 1}`} />)}</div> : null}
                 <h2 className="serif customizer-step-title">{item.title}</h2>
                 <p className="subtle">{item.required === true ? 'Required selection' : 'Optional selection'}{item.description ? ` · ${item.description}` : ''}</p>
                 <div className="dynamic-option-list">
@@ -332,7 +333,7 @@ export default function Customize() {
                         <b>{isModelStep && option.basePrice !== undefined ? `₹${option.basePrice.toLocaleString('en-IN')} base` : (option.priceAdjustment || 0) > 0 ? `+ ₹${option.priceAdjustment!.toLocaleString('en-IN')}` : (option.priceAdjustment || 0) < 0 ? `− ₹${Math.abs(option.priceAdjustment!).toLocaleString('en-IN')}` : 'Included'}</b>
                       </button>
                       {hasOptionDetails && <button type="button" className="option-details-toggle" aria-expanded={expanded} onClick={() => setExpandedOptionId(expanded ? null : option.id)}>{expanded ? 'Hide details' : `View details${photos.length > 1 ? ` · ${photos.length} photos` : ''}`}</button>}
-                      {expanded && hasOptionDetails && <div className="model-option-details">{option.description && <p className="subtle">{option.description}</p>}{photos.length > 0 && <div className="model-option-gallery">{photos.map((photo, index) => <img key={`${photo}-${index}`} src={photo} alt={`${option.name} photo ${index + 1}`} />)}</div>}</div>}
+                      {expanded && hasOptionDetails && <div className="model-option-details">{option.description && <p className="subtle">{option.description}</p>}{photos.length > 0 && <div className="model-option-gallery">{photos.map((photo, index) => <img key={`${photo}-${index}`} src={productImageSource(photo)} alt={`${option.name} photo ${index + 1}`} />)}</div>}</div>}
                     </article>;
                   })}
                   {!visibleOptions.length && <p className="subtle">No options are currently shown. Please contact the atelier.</p>}
