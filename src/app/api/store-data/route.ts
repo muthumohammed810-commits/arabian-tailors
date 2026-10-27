@@ -5,6 +5,7 @@ import { products as catalog } from '@/lib/catalog';
 import { addDefaultCustomization } from '@/lib/customization-defaults';
 import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
 import { getCustomerOrderPaymentFields } from '@/lib/upi-order-policy';
+import { isAbayaReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -270,6 +271,8 @@ export async function POST(request: Request) {
   if (!order || !validText(order.id, 100) || !/^AT-(?:[0-9]{6,}|[0-9a-f]{32})$/i.test(order.id) || !validText(order.customer, 160) || !validText(order.product, 240) || !Number.isFinite(order.total) || order.total < 0 || !statuses.includes(order.status) || !validEmail(order.delivery?.email) || !validText(order.delivery?.phone, 40) || !validText(order.delivery?.address, 500) || !validText(order.delivery?.city, 100) || !validText(order.delivery?.postal, 20)) return json({ error: 'Invalid order.' }, 400);
   const paymentFields = getCustomerOrderPaymentFields(order);
   if (!paymentFields) return json({ error: 'Customer checkout currently accepts UPI orders only.' }, 400);
+  const referencePhotoUrl = referencePhotoFromDesign(order.design);
+  if (order.design?.customerReferencePhoto !== undefined && (!isAbayaReferencePhotoForOrder(order.design, order.id) || !referencePhotoUrl)) return json({ error: 'The customer reference photo does not match this Abaya order.' }, 400);
   if (order.productId !== undefined && (!validText(order.productId, 100) || !validText(order.productName, 160) || (order.productImage !== undefined && (typeof order.productImage !== 'string' || order.productImage.length > 2000)) || !Number.isFinite(order.basePrice) || order.basePrice < 0)) return json({ error: 'Invalid product details.' }, 400);
   try {
     const clean = {

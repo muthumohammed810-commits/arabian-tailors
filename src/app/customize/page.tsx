@@ -8,6 +8,9 @@ import { GarmentVisual } from '@/components/garment-visual';
 import { createUpiPaymentUrl } from '@/lib/upi-payment';
 import { customizationDefaults, defaultMeasurements } from '@/lib/customization-defaults';
 import { productImageSource } from '@/lib/product-image-url';
+import { upload } from '@vercel/blob/client';
+import { ABAYA_REFERENCE_PREFIX, getAbayaCustomerSteps, isAbayaReferenceUrl, validateAbayaReferenceFile } from '@/lib/abaya-customization';
+import { ImageUploadError, withAbortableDeadline } from '@/lib/upload-batch';
 
 type ManagedModelCategory = { visible?: boolean; required?: boolean; options: CustomizationOption[] };
 type ManagedModelStep = { id: string; title: string; description?: string; visible?: boolean; required?: boolean; options: CustomizationOption[] };
@@ -19,6 +22,8 @@ type MeasurementField = { id: string; name: string; unit: 'cm' | 'inch'; require
 type StoreProduct = Product & { images?: string[]; available?: boolean; options?: string[]; customizationSteps?: CustomizationStep[]; measurements?: MeasurementField[]; measurementsEnabled?: boolean; stitchingType?: string; stock?: number };
 type TailoringStyle = { id: string; name: string; desc: string; price: number; image: string };
 type Fabric = { name: string; quality: string; price: number; available: boolean; swatch: string };
+type AbayaReferencePhoto = { url: string; preview: string; name: string };
+type AbayaReferenceDraft = { file: File; preview: string; pathname: string };
 const colors = [{ name: 'Ivory', hex: '#eee9dc' }, { name: 'Pure White', hex: '#f8f7f2' }, { name: 'Sand', hex: '#d1c3a3' }, { name: 'Midnight', hex: '#202326' }, { name: 'Slate', hex: '#777b80' }];
 const sizes = ['S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
 const namedColorSwatches: Record<string, string> = { white: '#f8f7f2', 'off white': '#f3f0e7', 'pure white': '#f8f7f2', cream: '#eee5d1', ivory: '#eee9dc', beige: '#d8c7a5', sand: '#d1c3a3', black: '#171817', navy: '#202b3d', 'navy blue': '#202b3d', midnight: '#202326', grey: '#858585', gray: '#858585', slate: '#777b80', brown: '#76543b', charcoal: '#454545', taupe: '#9a8976' };
@@ -87,8 +92,17 @@ export default function Customize() {
   const [submitting, setSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [paymentStatus, setPaymentStatus] = useState('Pending verification');
+  const [abayaReferencePhoto, setAbayaReferencePhoto] = useState<AbayaReferencePhoto | null>(null);
+  const [abayaReferenceDraft, setAbayaReferenceDraft] = useState<AbayaReferenceDraft | null>(null);
+  const [abayaReferenceUploading, setAbayaReferenceUploading] = useState(false);
+  const [abayaReferenceProgress, setAbayaReferenceProgress] = useState(0);
+  const [abayaReferenceError, setAbayaReferenceError] = useState('');
+  const referencePreviewUrls = useRef<string[]>([]);
+  const abayaReferenceUploadLock = useRef(false);
   const pendingOrderRef = useRef<any>(null);
   const checkoutReferenceRef = useRef('');
+
+  useEffect(() => () => referencePreviewUrls.current.forEach((url) => URL.revokeObjectURL(url)), []);
 
   useEffect(() => {
     const productId = new URLSearchParams(window.location.search).get('product');
@@ -123,7 +137,7 @@ export default function Customize() {
   const isAbaya = (selectedProduct || configuredProduct)?.category.toLowerCase() === 'abaya';
   const isKandura = (selectedProduct || configuredProduct)?.category.toLowerCase() === 'kandura' || !selectedProduct;
   const baseCustomSteps = configuredProduct?.customizationSteps || [];
-  const modelSelectionStep = baseCustomSteps.find(item => /model/i.test(item.title));
+  const modelSelectionStep = baseCustomSteps.find(item => isAbaya ? /model|abaya\s*style|style/i.test(item.title) : /model/i.test(item.title));
   const selectedModelOption = modelSelectionStep ? customSelections[modelSelectionStep.id] : undefined;
   const modelCustomization = isKandura ? selectedModelOption?.modelCustomization : undefined;
   const categoryForTitle = (title: string): ModelCategoryKey | undefined => /model/i.test(title) ? undefined : /colou?r/i.test(title) ? 'colors' : /fabric|cloth/i.test(title) ? 'fabrics' : /stitch/i.test(title) ? 'stitching' : undefined;
@@ -143,15 +157,18 @@ export default function Customize() {
       if (!baseCustomSteps.some(item => item.id === configured.id)) customStepsWithModel.push({ id: configured.id, title: configured.title, description: configured.description, required: configured.required, available: configured.visible !== false, options: configured.options });
     }
   }
-  const customSteps = customStepsWithModel.filter(item => item.available !== false);
+  const customSteps = (isAbaya
+    ? getAbayaCustomerSteps(customStepsWithModel.filter(item => item.available !== false))
+    : customStepsWithModel.filter(item => item.available !== false));
   const hasStoredCustomization = (configuredProduct?.customizationSteps?.length || 0) > 0;
   const hasGarmentDefaults = (!selectedProduct || isAbaya || isKandura) && !hasStoredCustomization;
   const hasModelStep = isKandura && customSteps[0]?.title.toLowerCase() === 'choose your kandura model';
-  const hasProductIntro = Boolean(selectedProduct && !hasModelStep);
-  const customStepStart = hasGarmentDefaults ? 4 : hasModelStep ? 0 : hasProductIntro ? 1 : 0;
+  const hasAbayaModelStep = isAbaya && Boolean(customSteps[0] && /model/i.test(customSteps[0].title));
+  const hasProductIntro = Boolean(selectedProduct && !hasModelStep && !hasAbayaModelStep);
+  const customStepStart = hasGarmentDefaults ? 4 : hasModelStep || hasAbayaModelStep ? 0 : hasProductIntro ? 1 : 0;
   const measurementFields = (configuredProduct?.measurements || []).filter(field => field.available !== false);
   const measurementsEnabled = configuredProduct?.measurementsEnabled !== false;
-  const showMeasurements = !isKandura && measurementsEnabled && measurementFields.length > 0;
+  const showMeasurements = !isKandura && !isAbaya && measurementsEnabled && measurementFields.length > 0;
   const measurementStep = customStepStart + customSteps.length;
   const hasTimingStep = hasGarmentDefaults && !showMeasurements;
   const timingStep = measurementStep + (showMeasurements ? 1 : 0);
@@ -159,7 +176,7 @@ export default function Customize() {
   const deliveryStep = reviewStep + 1;
   const paymentStep = deliveryStep + 1;
   const activeCustomStep = step >= customStepStart && step < measurementStep ? customSteps[step - customStepStart] : undefined;
-  const requiredSelectionMissing = Boolean(activeCustomStep && activeCustomStep.required === true && !customSelections[activeCustomStep.id]);
+  const requiredSelectionMissing = Boolean(activeCustomStep && activeCustomStep.required === true && !customSelections[activeCustomStep.id]) || Boolean(isAbaya && activeCustomStep && /model/i.test(activeCustomStep.title) && (abayaReferenceUploading || abayaReferenceDraft));
   const activeCustomOption = activeCustomStep ? customSelections[activeCustomStep.id] : undefined;
   const measurementTitle = activeCustomStep?.title.toLowerCase() || '';
   const needsCustomMeasurements = Boolean(activeCustomStep && /custom/i.test(activeCustomOption?.name || '') && /fit|size|length|sleeve|measurement/.test(measurementTitle));
@@ -182,6 +199,73 @@ export default function Customize() {
   useEffect(() => {
     if (needsCustomMeasurements) setCustomSizeExpanded(true);
   }, [needsCustomMeasurements, activeCustomOption?.id]);
+
+  function ensureCheckoutReference() {
+    if (!checkoutReferenceRef.current) {
+      checkoutReferenceRef.current = `AT-${Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+    }
+    return checkoutReferenceRef.current;
+  }
+
+  async function uploadAbayaReferencePhoto(draft = abayaReferenceDraft) {
+    if (!draft || abayaReferenceUploadLock.current) return;
+    abayaReferenceUploadLock.current = true;
+    const orderId = ensureCheckoutReference();
+    setAbayaReferenceUploading(true);
+    setAbayaReferenceProgress(0);
+    setAbayaReferenceError('');
+    try {
+      const blob = await withAbortableDeadline(
+        async (signal, reportActivity) => upload(draft.pathname, draft.file, {
+          access: 'private',
+          handleUploadUrl: '/api/customer/abaya-reference-photo',
+          clientPayload: orderId,
+          contentType: draft.file.type,
+          multipart: false,
+          abortSignal: signal,
+          onUploadProgress: (event) => {
+            reportActivity();
+            setAbayaReferenceProgress(Math.min(99, Math.max(0, event.percentage || 0)));
+          },
+        }),
+        { timeoutMs: 120_000, idleTimeoutMs: 45_000, onTimeout: (kind) => new ImageUploadError(kind === 'idle' ? 'blob' : 'confirmation', kind === 'idle' ? 'The photo upload stopped reporting progress. Retry the photo; your other selections are unchanged.' : 'The photo upload did not finish before its deadline. Retry the photo; your other selections are unchanged.', { fileName: draft.file.name }) },
+      );
+      if (!isAbayaReferenceUrl(blob.url, orderId)) throw new ImageUploadError('confirmation', 'Storage returned an invalid private photo reference. Please retry.', { fileName: draft.file.name });
+      setAbayaReferencePhoto({ url: blob.url, preview: draft.preview, name: draft.file.name });
+      setAbayaReferenceDraft(null);
+      setAbayaReferenceProgress(100);
+    } catch (error) {
+      setAbayaReferenceProgress(0);
+      setAbayaReferenceError(error instanceof Error ? error.message : 'The photo could not be uploaded. Retry it without losing your selections.');
+    } finally {
+      abayaReferenceUploadLock.current = false;
+      setAbayaReferenceUploading(false);
+    }
+  }
+
+  function selectAbayaReferencePhoto(file: File | undefined) {
+    if (!file) return;
+    const validationError = validateAbayaReferenceFile(file);
+    if (validationError) {
+      setAbayaReferenceError(validationError);
+      return;
+    }
+    const preview = URL.createObjectURL(file);
+    referencePreviewUrls.current.push(preview);
+    const orderId = ensureCheckoutReference();
+    const extension = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/png' ? 'png' : 'webp';
+    const draft = { file, preview, pathname: `${ABAYA_REFERENCE_PREFIX}${orderId}/${crypto.randomUUID()}.${extension}` };
+    setAbayaReferenceDraft(draft);
+    setAbayaReferenceError('');
+    void uploadAbayaReferencePhoto(draft);
+  }
+
+  function removeAbayaReferencePhoto() {
+    setAbayaReferenceDraft(null);
+    setAbayaReferencePhoto(null);
+    setAbayaReferenceProgress(0);
+    setAbayaReferenceError('');
+  }
 
   function openUpiApp(orderRef: string) {
     setUpiFallback(false);
@@ -210,7 +294,7 @@ export default function Customize() {
     if (submitting) return;
     setCheckoutError('');
     setSubmitting(true);
-    const id = pendingOrderRef.current?.id || checkoutReferenceRef.current || `AT-${Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+    const id = pendingOrderRef.current?.id || ensureCheckoutReference();
     const fit = sizing === 'standard' ? `Standard · ${size}` : `Custom (${unit}): ${Object.entries(measurements).map(([key, value]) => `${key} ${value || '—'}`).join(', ')}`;
     const productName = selectedProduct?.name || configuredProduct?.name || `${currentStyle.name} Kandura`;
     const chosenCustomOptions = customSteps.map((item) => { const selected = customSelections[item.id]; return { stepId: item.id, step: item.title, required: item.required === true, optionId: selected?.id || '', option: selected?.name || '', optionDescription: selected?.description || '', optionImage: selected?.image || selected?.images?.[0] || '', optionImages: [...new Set([...(selected?.images || []), ...(selected?.image ? [selected.image] : [])])], optionSwatch: selected?.swatch || '', priceAdjustment: selected?.priceAdjustment || 0, ...(selected?.basePrice !== undefined ? { basePrice: selected.basePrice } : {}), ...(selected?.stock !== undefined ? { stock: selected.stock } : {}) }; });
@@ -241,6 +325,7 @@ export default function Customize() {
         productType: selectedProduct?.category || 'Kandura',
         ...(selectedProduct ? { productId: selectedProduct.id, productName: selectedProduct.name, productImage: selectedProduct.image, basePrice, options: [...(activeProductOption ? [activeProductOption] : []), ...chosenCustomOptions.map((item) => item.option).filter(Boolean)] } : { ...(configuredProduct ? { productId: configuredProduct.id, productName, productImage: configuredProduct.image } : {}), style, styleName: selectedModelOption?.name || customSelections[customSteps[0]?.id]?.name || currentStyle.name, basePrice, options: [...(activeProductOption ? [activeProductOption] : []), ...chosenCustomOptions.map((item) => item.option).filter(Boolean)] }),
         ...(selectedModelOption ? { selectedModel: { id: selectedModelOption.id, name: selectedModelOption.name, image: selectedModelOption.image || selectedModelOption.images?.[0] || '', images: [...new Set([...(selectedModelOption.images || []), ...(selectedModelOption.image ? [selectedModelOption.image] : [])])], basePrice: selectedModelOption.basePrice ?? basePrice, priceAdjustment: selectedModelOption.priceAdjustment || 0 } } : {}),
+        ...(isAbaya && abayaReferencePhoto ? { customerReferencePhoto: { url: abayaReferencePhoto.url, fileName: abayaReferencePhoto.name, uploaded: true } } : {}),
         ...selectedOptions,
         ...(hasGarmentDefaults ? { fabricPrice: currentFabric.price, priorityPrice: hasTimingStep && speed === 'urgent' ? 350 : 0 } : {}),
         total,
@@ -274,9 +359,7 @@ export default function Customize() {
       openUpiApp(orderId);
       return;
     }
-    if (step === reviewStep && !checkoutReferenceRef.current) {
-      checkoutReferenceRef.current = `AT-${Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-    }
+    if (step === reviewStep) ensureCheckoutReference();
     if (step < deliveryStep) setStep((value) => value + 1);
   }
 
@@ -354,6 +437,18 @@ export default function Customize() {
                   })}
                   {!visibleOptions.length && <p className="subtle">No options are currently shown. Please contact the atelier.</p>}
                 </div>
+                {isAbaya && isModelStep && <section className="abaya-reference-upload" aria-label="Abaya reference photo">
+                  <div><h3 className="serif">Upload Your Abaya Reference Photo</h3><p className="subtle">Optional. JPG, PNG or WebP · up to 10 MB. The photo is stored privately and attached to your order.</p></div>
+                  {(abayaReferenceDraft || abayaReferencePhoto) && <img className="abaya-reference-preview" src={abayaReferenceDraft?.preview || abayaReferencePhoto?.preview} alt="Full Abaya reference photo preview" />}
+                  <div className="abaya-reference-actions">
+                    <label className="btn btn-outline">{abayaReferencePhoto ? 'Replace photo' : 'Choose photo'}<input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" disabled={abayaReferenceUploading} onChange={event => { selectAbayaReferencePhoto(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }} /></label>
+                    {abayaReferenceDraft && !abayaReferenceUploading && <button type="button" className="btn btn-outline" onClick={() => void uploadAbayaReferencePhoto()}>Retry upload</button>}
+                    {(abayaReferenceDraft || abayaReferencePhoto) && !abayaReferenceUploading && <button type="button" className="btn btn-outline" onClick={removeAbayaReferencePhoto}>Remove photo</button>}
+                    {abayaReferenceUploading && <span role="status" className="subtle">Uploading securely · {abayaReferenceProgress}%</span>}
+                    {!abayaReferenceDraft && abayaReferencePhoto && <span role="status" className="subtle">Photo uploaded securely; it will be attached when you submit the order.</span>}
+                  </div>
+                  {abayaReferenceError && <p role="alert" className="checkout-error">{abayaReferenceError}</p>}
+                </section>}
                 {showCustomMeasurements && <section className="inline-custom-measurements">
                   <button type="button" className="inline-custom-measurements-toggle" aria-expanded={customSizeExpanded} onClick={() => setCustomSizeExpanded(value => !value)}><span><b>Custom measurements</b><small className="subtle">Enter the fields requested by the atelier</small></span><span aria-hidden="true">{customSizeExpanded ? '−' : '+'}</span></button>
                   {customSizeExpanded && <div className="measurement-grid">{customOptionMeasurements.map(field => <label className="subtle" key={field.id}>{field.name}{field.required === true ? ' *' : ''}<input type="number" min="0" required={field.required === true} value={measurements[field.id] || ''} onChange={event => setMeasurements(previous => ({ ...previous, [field.id]: event.target.value }))} placeholder={field.unit} /></label>)}<label className="subtle">Unit<select value={unit} onChange={event => setUnit(event.target.value)}><option>cm</option><option>inch</option></select></label></div>}
@@ -367,7 +462,7 @@ export default function Customize() {
 
             {hasTimingStep && step === timingStep && <><h2 className="serif customizer-step-title">Choose your timing</h2><p className="subtle">We’ll confirm an estimated completion date before payment.</p><div className="timing-choices">{[{ id: 'normal', name: 'Normal tailoring', desc: 'Our considered standard schedule', fee: 0 }, { id: 'urgent', name: 'Priority tailoring', desc: 'Subject to atelier availability', fee: 350 }].map((item) => <button key={item.id} className={speed === item.id ? 'selected' : ''} onClick={() => setSpeed(item.id)}><span className="eyebrow">{item.fee ? 'Priority' : 'Standard'}</span><b className="serif">{item.name}</b><span className="subtle">{item.desc}</span><span>{item.fee ? `+ ₹${item.fee}` : 'Included'}</span></button>)}</div><label className="subtle customizer-note">A note for your tailor<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} placeholder="Share a fit preference or helpful detail…" rows={3} /></label></>}
 
-            {step === reviewStep && <><h2 className="serif customizer-step-title">Your design, at a glance.</h2><p className="subtle">Review your choices before continuing.</p><div className="design-review">{[['Garment', selectedProduct?.name || configuredProduct?.name || `${currentStyle.name} Kandura`], ...(selectedProductOption ? [['Option', selectedProductOption]] : []), ...customSteps.map(item => [item.title, customSelections[item.id]?.name || (item.required===true?'Not selected':'Not selected (optional)')]), ...(measurementsEnabled && measurementFields.length ? [['Custom measurements', measurementFields.filter(field=>measurements[field.id]?.trim()).map(field=>`${field.name}: ${measurements[field.id]} ${field.unit}`).join(', ') || 'Not entered']] : []), ...(hasGarmentDefaults ? [['Fabric', currentFabric.name], ['Colour', color], ['Fit', sizing === 'standard' ? `Standard · ${size}` : `Custom measurements (${unit})`], ['Timing', speed === 'normal' ? 'Normal tailoring' : 'Priority tailoring']] : [])].map(([label, value]) => <div key={label}><span className="subtle">{label}</span><span>{value}</span></div>)}</div><label className="subtle customizer-note">A note for your tailor<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} placeholder="Share a fit preference or helpful detail…" rows={3} /></label><div className="price-estimate"><div className="eyebrow">Price estimate · INR</div>{selectedProduct && <div className="price-estimate-row"><span className="subtle">{selectedProduct.name} · base</span><span>₹{selectedProduct.price.toLocaleString('en-IN')}</span></div>}{hasGarmentDefaults&&<div className="price-estimate-row"><span className="subtle">Fabric · {currentFabric.name}</span><span>₹{currentFabric.price.toLocaleString('en-IN')}</span></div>}{isKandura && !selectedProduct && <div className="price-estimate-row"><span className="subtle">{currentStyle.name} tailoring</span><span>₹{currentStyle.price.toLocaleString('en-IN')}</span></div>}{customSteps.map(item => customSelections[item.id]?.priceAdjustment ? <div className="price-estimate-row" key={item.id}><span className="subtle">{item.title} · {customSelections[item.id].name}</span><span>{customSelections[item.id].priceAdjustment! > 0 ? ' + ' : ' − '}₹{Math.abs(customSelections[item.id].priceAdjustment!).toLocaleString('en-IN')}</span></div> : null)}{hasGarmentDefaults && speed === 'urgent' && <div className="price-estimate-row"><span className="subtle">Priority tailoring estimate</span><span>₹350</span></div>}<div className="price-estimate-total"><span>Total estimate</span><b className="gold">₹{total.toLocaleString('en-IN')}</b></div><p className="subtle">Illustrative pricing. Final price and availability must be confirmed by the atelier.</p></div><div className="customizer-notice"><ShieldCheck size={15} className="gold" />After placing a custom {garmentLabel} order, the design cannot be changed or cancelled. Payment is required before tailoring begins.</div></>}
+            {step === reviewStep && <><h2 className="serif customizer-step-title">Your design, at a glance.</h2><p className="subtle">Review your choices before continuing.</p><div className="design-review">{[['Garment', selectedProduct?.name || configuredProduct?.name || `${currentStyle.name} Kandura`], ...(selectedProductOption ? [['Option', selectedProductOption]] : []), ...customSteps.map(item => [item.title, customSelections[item.id]?.name || (item.required===true?'Not selected':'Not selected (optional)')]), ...(isAbaya && abayaReferencePhoto ? [['Reference photo', abayaReferencePhoto.name]] : []), ...(measurementsEnabled && measurementFields.length ? [['Custom measurements', measurementFields.filter(field=>measurements[field.id]?.trim()).map(field=>`${field.name}: ${measurements[field.id]} ${field.unit}`).join(', ') || 'Not entered']] : []), ...(hasGarmentDefaults ? [['Fabric', currentFabric.name], ['Colour', color], ['Fit', sizing === 'standard' ? `Standard · ${size}` : `Custom measurements (${unit})`], ['Timing', speed === 'normal' ? 'Standard tailoring' : 'Priority tailoring']] : [])].map(([label, value]) => <div key={label}><span className="subtle">{label}</span><span>{value}</span></div>)}</div><label className="subtle customizer-note">A note for your tailor<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} placeholder="Share a fit preference or helpful detail…" rows={3} /></label><div className="price-estimate"><div className="eyebrow">Price estimate · INR</div>{selectedProduct && <div className="price-estimate-row"><span className="subtle">{selectedProduct.name} · base</span><span>₹{selectedProduct.price.toLocaleString('en-IN')}</span></div>}{hasGarmentDefaults&&<div className="price-estimate-row"><span className="subtle">Fabric · {currentFabric.name}</span><span>₹{currentFabric.price.toLocaleString('en-IN')}</span></div>}{isKandura && !selectedProduct && <div className="price-estimate-row"><span className="subtle">{currentStyle.name} tailoring</span><span>₹{currentStyle.price.toLocaleString('en-IN')}</span></div>}{customSteps.map(item => customSelections[item.id]?.priceAdjustment ? <div className="price-estimate-row" key={item.id}><span className="subtle">{item.title} · {customSelections[item.id].name}</span><span>{customSelections[item.id].priceAdjustment! > 0 ? ' + ' : ' − '}₹{Math.abs(customSelections[item.id].priceAdjustment!).toLocaleString('en-IN')}</span></div> : null)}{hasGarmentDefaults && speed === 'urgent' && <div className="price-estimate-row"><span className="subtle">Priority tailoring estimate</span><span>₹350</span></div>}<div className="price-estimate-total"><span>Total estimate</span><b className="gold">₹{total.toLocaleString('en-IN')}</b></div><p className="subtle">Illustrative pricing. Final price and availability must be confirmed by the atelier.</p></div><div className="customizer-notice"><ShieldCheck size={15} className="gold" />After placing a custom {garmentLabel} order, the design cannot be changed or cancelled. Payment is required before tailoring begins.</div></>}
 
             {step === deliveryStep && <>
               <h2 className="serif customizer-step-title">Delivery details</h2>
