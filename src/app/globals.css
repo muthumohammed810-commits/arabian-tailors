@@ -384,7 +384,7 @@ body{background:var(--ink);color:var(--ivory);font-family:var(--font-ui),Arial,s
 @media(max-width:560px){.model-option-card>.model-photo-fallback{height:98px}.model-admin-photo-preview{height:116px}}
 
 .model-option-item .dynamic-option-choice{grid-template-columns:minmax(0,1fr)!important;grid-template-rows:auto minmax(0,1fr) auto!important;align-items:stretch}
-.model-option-item .dynamic-option-choice>.dynamic-option-image,.model-option-item .dynamic-option-choice>.model-photo-fallback{grid-column:1!important;grid-row:1!important;width:100%!important;height:136px!important;flex:none!important;object-fit:cover}
+.model-option-item .dynamic-option-choice>.dynamic-option-image,.model-option-item .dynamic-option-choice>.model-photo-fallback{grid-column:1!important;grid-row:1!important;width:100%!important;height:136px!important;flex:none!important;object-fit:contain!important}.model-option-item .dynamic-option-choice>.dynamic-option-image{background:#1b1c18}
 .model-option-item .dynamic-option-choice>.dynamic-option-copy{grid-column:1!important;grid-row:2!important}
 .model-option-item .dynamic-option-choice>b:last-child{grid-column:1!important;grid-row:3!important;justify-self:end}
 @media(max-width:560px){.model-option-item .dynamic-option-choice>.dynamic-option-image,.model-option-item .dynamic-option-choice>.model-photo-fallback{height:98px!important}}
