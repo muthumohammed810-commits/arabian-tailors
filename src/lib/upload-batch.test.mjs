@@ -27,6 +27,24 @@ test('reports 100 only after each image URL has been saved', async () => {
   assert.equal(progress.at(-1), 100);
 });
 
+test('preserves sub-percent Blob byte progress instead of rounding it to a stale integer', async () => {
+  const progress = [];
+  await uploadFilesSequentially(
+    [{ name: 'model.jpg', size: 1000 }],
+    async (_file, onProgress) => {
+      onProgress({ loaded: 740, total: 1000, percentage: 74 });
+      onProgress({ loaded: 741, total: 1000, percentage: 74.1 });
+      return 'https://images.blob.vercel-storage.com/model.jpg';
+    },
+    async () => {},
+    value => progress.push(value),
+  );
+
+  assert.ok(progress.includes(74));
+  assert.ok(progress.includes(74.1));
+  assert.equal(progress.at(-1), 100);
+});
+
 test('keeps earlier saved images and identifies the later file that failed', async () => {
   const files = [
     { name: 'first.jpg', size: 10 },

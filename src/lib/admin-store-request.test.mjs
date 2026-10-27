@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AdminStoreRequestError, requestAdminStoreData } from './admin-store-request.ts';
+import { AdminStoreRequestError, requestAdminStoreData, serializeAdminStoreWrite } from './admin-store-request.ts';
 
 const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -85,4 +85,27 @@ test('bounds a response body that stalls after HTTP success', async () => {
     requestAdminStoreData({ method: 'PUT', body: {}, timeoutMs: 15, fetcher: async () => response }),
     error => error instanceof AdminStoreRequestError && error.kind === 'timeout',
   );
+});
+
+test('serializes store rewrites and continues after a failed write', async () => {
+  const order = [];
+  let releaseFirst;
+  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  const first = serializeAdminStoreWrite(async () => {
+    order.push('first-start');
+    await firstGate;
+    order.push('first-end');
+    throw new Error('first write failed');
+  });
+  const second = serializeAdminStoreWrite(async () => {
+    order.push('second-start');
+    return 'confirmed';
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(order, ['first-start']);
+  releaseFirst();
+  await assert.rejects(first, /first write failed/);
+  assert.equal(await second, 'confirmed');
+  assert.deepEqual(order, ['first-start', 'first-end', 'second-start']);
 });

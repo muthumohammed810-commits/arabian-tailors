@@ -19,6 +19,15 @@ export class AdminStoreRequestError extends Error {
 
 type StoreDataResponse = { ok?: boolean; error?: unknown; [key: string]: unknown };
 
+let adminStoreWriteQueue: Promise<void> = Promise.resolve();
+
+/** Serialize same-tab writes because each store-data PUT rewrites the shared Blob store file. */
+export function serializeAdminStoreWrite<Result>(operation: () => Promise<Result>): Promise<Result> {
+  const result = adminStoreWriteQueue.then(operation, operation);
+  adminStoreWriteQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
 async function withRequestDeadline<Result>(operation: (signal: AbortSignal) => Promise<Result>, timeoutMs: number): Promise<Result> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;

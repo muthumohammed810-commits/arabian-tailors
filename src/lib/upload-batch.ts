@@ -111,7 +111,8 @@ export async function uploadFilesSequentially<FileType extends { size: number; n
   let completedBytes = 0;
   let lastReported = 0;
   const report = (percentage: number) => {
-    lastReported = Math.max(lastReported, Math.min(99, Math.floor(percentage)));
+    const preciseProgress = Number.isFinite(percentage) ? Math.min(99.99, Math.round(percentage * 100) / 100) : lastReported;
+    lastReported = Math.max(lastReported, preciseProgress);
     onProgress(lastReported);
   };
 
