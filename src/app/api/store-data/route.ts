@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/app/admin/guard';
 import { products as catalog } from '@/lib/catalog';
 import { addDefaultCustomization } from '@/lib/customization-defaults';
+import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -280,8 +281,21 @@ export async function POST(request: Request) {
       delivery: order.delivery, design: order.design,
       createdAt: typeof order.createdAt === 'string' ? order.createdAt : new Date().toISOString(),
     };
-    await put(`${ORDER_PREFIX}${clean.id}.json`, JSON.stringify(clean), { access: 'private', addRandomSuffix: false, allowOverwrite: false, contentType: 'application/json' });
-    return json({ ok: true }, 201);
+    const pathname = `${ORDER_PREFIX}${clean.id}.json`;
+    const existing = await readBlob(pathname);
+    if (existing) {
+      if (isSameOrderIntent(existing, clean)) return json({ ok: true, orderId: clean.id, statusPayment: existing.statusPayment || 'Pending verification', alreadySaved: true }, 200);
+      return json({ error: 'This order reference is already in use. Please contact the atelier before retrying.' }, 409);
+    }
+    try {
+      await put(pathname, JSON.stringify(clean), { access: 'private', addRandomSuffix: false, allowOverwrite: false, contentType: 'application/json' });
+    } catch (writeError) {
+      // A concurrent request may have saved the same reference after our read.
+      const racedOrder = await readBlob(pathname);
+      if (racedOrder && isSameOrderIntent(racedOrder, clean)) return json({ ok: true, orderId: clean.id, statusPayment: racedOrder.statusPayment || 'Pending verification', alreadySaved: true }, 200);
+      throw writeError;
+    }
+    return json({ ok: true, orderId: clean.id, statusPayment: 'Pending verification' }, 201);
   } catch (error) {
     logOrderWriteFailure(order.id, error);
     return json({ error: 'Could not save order.' }, 500);
