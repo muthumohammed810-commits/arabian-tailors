@@ -11,6 +11,9 @@ test('uses the configured merchant UPI ID, exact amount, merchant label and uniq
   assert.equal(url.searchParams.get('am'), '3250.50');
   assert.equal(url.searchParams.get('cu'), 'INR');
   assert.equal(url.searchParams.get('tr'), 'AT-001122');
+  assert.ok(url.search.includes('pa=atelier%40upi'));
+  assert.ok(url.search.includes('pn=Arabian+Tailors'));
+  assert.ok(url.search.includes('tn=Arabian+Tailors+order+AT-001122'));
 });
 
 test('does not create a payment URL without configured merchant details or valid amount', () => {

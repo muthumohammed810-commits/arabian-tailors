@@ -4,6 +4,7 @@ import { isAdminAuthenticated } from '@/app/admin/guard';
 import { products as catalog } from '@/lib/catalog';
 import { addDefaultCustomization } from '@/lib/customization-defaults';
 import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
+import { getCustomerOrderPaymentFields } from '@/lib/upi-order-policy';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -267,6 +268,8 @@ export async function POST(request: Request) {
   }
   const order = await request.json().catch(() => null);
   if (!order || !validText(order.id, 100) || !/^AT-(?:[0-9]{6,}|[0-9a-f]{32})$/i.test(order.id) || !validText(order.customer, 160) || !validText(order.product, 240) || !Number.isFinite(order.total) || order.total < 0 || !statuses.includes(order.status) || !validEmail(order.delivery?.email) || !validText(order.delivery?.phone, 40) || !validText(order.delivery?.address, 500) || !validText(order.delivery?.city, 100) || !validText(order.delivery?.postal, 20)) return json({ error: 'Invalid order.' }, 400);
+  const paymentFields = getCustomerOrderPaymentFields(order);
+  if (!paymentFields) return json({ error: 'Customer checkout currently accepts UPI orders only.' }, 400);
   if (order.productId !== undefined && (!validText(order.productId, 100) || !validText(order.productName, 160) || (order.productImage !== undefined && (typeof order.productImage !== 'string' || order.productImage.length > 2000)) || !Number.isFinite(order.basePrice) || order.basePrice < 0)) return json({ error: 'Invalid product details.' }, 400);
   try {
     const clean = {
@@ -276,8 +279,7 @@ export async function POST(request: Request) {
       ...(order.productId ? { productId: order.productId, productName: order.productName, productImage: order.productImage || '', basePrice: order.basePrice } : {}),
       date: order.date || new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
       total: order.total, status: order.status, tone: order.tone || 'sand',
-      statusPayment: 'Pending verification',
-      paymentMethod: ['upi','card','cod'].includes(order.paymentMethod) ? order.paymentMethod : 'Not provided',
+      ...paymentFields,
       delivery: order.delivery, design: order.design,
       createdAt: typeof order.createdAt === 'string' ? order.createdAt : new Date().toISOString(),
     };
