@@ -6,7 +6,8 @@ import { addDefaultCustomization } from '@/lib/customization-defaults';
 import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
 import { getCustomerOrderPaymentFields } from '@/lib/upi-order-policy';
 import { isAbayaReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
-import { calculateConfiguredSubtotal, calculateOrderTotal, quoteDelivery, type DeliveryRule } from '@/lib/delivery-pricing';
+import { calculateConfiguredSubtotal, calculateOrderTotal, publicDeliveryRules, quoteDelivery, type DeliveryRule } from '@/lib/delivery-pricing';
+import { isOfficialIndiaPostPinSource } from '@/lib/delivery-rule-csv.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -130,6 +131,10 @@ function validateSettings(value: any) {
         && (rule.area === undefined || validText(rule.area, 120))
         && typeof rule.prefix === 'string' && /^\d{3,6}$/.test(rule.prefix) && !prefixes.has(rule.prefix) && (prefixes.add(rule.prefix), true)
         && Number.isFinite(rule.fee) && rule.fee >= 0 && rule.fee <= 1_000_000
+        && (rule.pinSource === undefined || validText(rule.pinSource, 500))
+        && (rule.feeSource === undefined || validText(rule.feeSource, 500))
+        && (rule.imported === undefined || typeof rule.imported === 'boolean')
+        && (rule.imported !== true || (Number.isInteger(rule.fee) && validText(rule.area, 120) && validText(rule.pinSource, 500) && isOfficialIndiaPostPinSource(rule.pinSource) && validText(rule.feeSource, 500)))
         && typeof rule.enabled === 'boolean')) return false;
       continue;
     }
@@ -178,7 +183,7 @@ export async function GET() {
       }))].map(([, customer]) => customer);
       return json({ ...store, orders, customers });
     }
-    return json({ products: store.products.filter(p => p.available !== false), settings: store.settings });
+    return json({ products: store.products.filter(p => p.available !== false), settings: { ...store.settings, deliveryRules: publicDeliveryRules(Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) } });
   } catch { return json({ error: 'Could not load store data.' }, 500); }
 }
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateConfiguredSubtotal, calculateOrderTotal, quoteDelivery } from './delivery-pricing.ts';
+import { calculateConfiguredSubtotal, calculateOrderTotal, publicDeliveryRules, quoteDelivery } from './delivery-pricing.ts';
 import { createUpiPaymentUrl } from './upi-payment.ts';
 
 test('PIN rules choose the most specific configured prefix', () => {
@@ -36,6 +36,19 @@ test('PIN 676303 matches only an explicitly enabled configured exact-PIN rule', 
   assert.deepEqual(quoteDelivery('676303', fixtureOnlyRule), { status: 'available', fee: 123, message: 'Delivery Fee: ₹123' });
   assert.equal(quoteDelivery('676304', fixtureOnlyRule).status, 'unavailable');
   assert.equal(quoteDelivery('676303', [{ ...fixtureOnlyRule[0], enabled: false }]).status, 'unavailable');
+});
+
+test('imported PIN rules stay ineligible until PIN and owner fee approvals are recorded', () => {
+  const base = { id: 'imported', area: 'Approved area', prefix: '676303', fee: 123, enabled: true, imported: true };
+  assert.equal(quoteDelivery('676303', [base]).status, 'unavailable');
+  assert.equal(quoteDelivery('676303', [{ ...base, pinSource: 'https://www.indiapost.gov.in/rti/pincodelist' }]).status, 'unavailable');
+  assert.equal(quoteDelivery('676303', [{ ...base, pinSource: 'https://www.indiapost.gov.in/rti/pincodelist', feeSource: 'Owner approval 2026-10-28' }]).fee, 123);
+});
+
+test('public delivery rules retain checkout fields but omit import approval references', () => {
+  const [rule] = publicDeliveryRules([{ id: 'imported', area: 'Area', prefix: '676303', fee: 123, enabled: true, imported: true, pinSource: 'https://www.indiapost.gov.in/rti/pincodelist', feeSource: 'Owner note' }]);
+  assert.deepEqual(rule, { id: 'imported', area: 'Area', prefix: '676303', fee: 123, enabled: true });
+  assert.equal(quoteDelivery('676303', [rule]).fee, 123);
 });
 
 test('server total includes the confirmed delivery fee and UPI uses that exact total', () => {

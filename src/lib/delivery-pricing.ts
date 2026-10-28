@@ -1,8 +1,15 @@
-export type DeliveryRule = { id: string; area?: string; prefix: string; fee: number; enabled: boolean };
+import { isOfficialIndiaPostPinSource } from './delivery-rule-csv.mjs';
+
+export type DeliveryRule = { id: string; area?: string; prefix: string; fee: number; enabled: boolean; pinSource?: string; feeSource?: string; imported?: boolean };
 export type DeliveryQuote =
   | { status: 'invalid'; fee: null; message: string }
   | { status: 'unavailable'; fee: null; message: string }
   | { status: 'available'; fee: number; message: string };
+
+/** Keep owner approval/source notes in authenticated Admin data only. */
+export function publicDeliveryRules(rules: DeliveryRule[] = []): DeliveryRule[] {
+  return rules.map(rule => ({ id: rule.id, area: rule.area, prefix: rule.prefix, fee: rule.fee, enabled: rule.enabled }));
+}
 
 /** Server-side payable total after the configured delivery fee and discount. */
 export function calculateOrderTotal(subtotal: number, deliveryFee: number, discount = 0): number | null {
@@ -15,7 +22,7 @@ export function quoteDelivery(postal: string, rules: DeliveryRule[] = []): Deliv
   const pin = String(postal || '').trim();
   if (!/^[1-9]\d{5}$/.test(pin)) return { status: 'invalid', fee: null, message: 'Enter a valid 6-digit Indian PIN code to check delivery.' };
   const rule = rules
-    .filter(item => item?.enabled === true && typeof item.prefix === 'string' && /^\d{3,6}$/.test(item.prefix) && pin.startsWith(item.prefix) && Number.isFinite(item.fee) && item.fee >= 0)
+    .filter(item => item?.enabled === true && typeof item.prefix === 'string' && /^\d{3,6}$/.test(item.prefix) && pin.startsWith(item.prefix) && Number.isFinite(item.fee) && item.fee >= 0 && (item.imported !== true || (Number.isInteger(item.fee) && typeof item.area === 'string' && Boolean(item.area.trim()) && typeof item.pinSource === 'string' && isOfficialIndiaPostPinSource(item.pinSource) && typeof item.feeSource === 'string' && Boolean(item.feeSource.trim()))))
     .sort((a, b) => b.prefix.length - a.prefix.length)[0];
   if (!rule) return { status: 'unavailable', fee: null, message: 'Delivery unavailable for this PIN code. Please contact the atelier.' };
   return { status: 'available', fee: Math.round(rule.fee), message: rule.fee === 0 ? 'Delivery Fee: FREE' : `Delivery Fee: ₹${Math.round(rule.fee).toLocaleString('en-IN')}` };
