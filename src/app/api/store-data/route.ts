@@ -6,7 +6,7 @@ import { addDefaultCustomization } from '@/lib/customization-defaults';
 import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
 import { getCustomerOrderPaymentFields } from '@/lib/upi-order-policy';
 import { isAbayaReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
-import { calculateConfiguredSubtotal, calculateOrderTotal, publicDeliveryRules, quoteDelivery, type DeliveryRule } from '@/lib/delivery-pricing';
+import { calculateConfiguredSubtotal, calculateOrderTotal, DELIVERY_PICKUP_ORIGIN, publicDeliveryRules, quoteDelivery, type DeliveryRule } from '@/lib/delivery-pricing';
 import { isOfficialIndiaPostPinSource } from '@/lib/delivery-rule-csv.mjs';
 
 export const runtime = 'nodejs';
@@ -122,6 +122,10 @@ function validEmail(value: unknown): value is string { return typeof value === '
 function validateSettings(value: any) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   for (const [key, item] of Object.entries(value)) {
+    if (key === 'deliveryPickupOrigin') {
+      if (item !== DELIVERY_PICKUP_ORIGIN) return false;
+      continue;
+    }
     if (key === 'deliveryRules') {
       if (!Array.isArray(item) || item.length > 500) return false;
       const ids = new Set<string>();

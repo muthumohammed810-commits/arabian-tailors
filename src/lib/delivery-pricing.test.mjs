@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateConfiguredSubtotal, calculateOrderTotal, publicDeliveryRules, quoteDelivery } from './delivery-pricing.ts';
+import { calculateConfiguredSubtotal, calculateOrderTotal, DELIVERY_PICKUP_ORIGIN, publicDeliveryRules, quoteDelivery } from './delivery-pricing.ts';
 import { createUpiPaymentUrl } from './upi-payment.ts';
 
 test('PIN rules choose the most specific configured prefix', () => {
@@ -10,6 +10,17 @@ test('PIN rules choose the most specific configured prefix', () => {
   ];
   assert.deepEqual(quoteDelivery('682001', rules), { status: 'available', fee: 35, message: 'Delivery Fee: ₹35' });
   assert.equal(quoteDelivery('682001', rules).fee, 35);
+});
+
+test('shop-approved zone prefixes quote grouped destinations and exact PIN rules override them', () => {
+  const rules = [
+    { id: 'approved-zone-test', area: 'Test zone only', prefix: '676', fee: 140, enabled: true },
+    { id: 'approved-pin-test', area: 'Test exact PIN only', prefix: '676303', fee: 90, enabled: true },
+  ];
+  assert.equal(quoteDelivery('676304', rules).fee, 140);
+  assert.equal(quoteDelivery('676303', rules).fee, 90);
+  assert.equal(quoteDelivery('676999', [{ ...rules[0], enabled: false }]).status, 'unavailable');
+  assert.equal(DELIVERY_PICKUP_ORIGIN, 'Parappanangadi, Malappuram, Kerala, India');
 });
 
 test('free delivery is explicit and unmatched/invalid PINs never invent a fee', () => {
@@ -43,6 +54,7 @@ test('imported PIN rules stay ineligible until PIN and owner fee approvals are r
   assert.equal(quoteDelivery('676303', [base]).status, 'unavailable');
   assert.equal(quoteDelivery('676303', [{ ...base, pinSource: 'https://www.indiapost.gov.in/rti/pincodelist' }]).status, 'unavailable');
   assert.equal(quoteDelivery('676303', [{ ...base, pinSource: 'https://www.indiapost.gov.in/rti/pincodelist', feeSource: 'Owner approval 2026-10-28' }]).fee, 123);
+  assert.equal(quoteDelivery('676303', [{ ...base, pinSource: 'https://www.data.gov.in/resource/all-india-pincode-directory-till-last-month', feeSource: 'Owner approval 2026-10-28' }]).fee, 123);
 });
 
 test('public delivery rules retain checkout fields but omit import approval references', () => {

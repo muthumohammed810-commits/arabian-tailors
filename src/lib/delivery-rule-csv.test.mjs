@@ -47,4 +47,7 @@ test('PIN source references must use the official India Post HTTPS domain', () =
   assert.equal(isOfficialIndiaPostPinSource('https://www.indiapost.gov.in/rti/pincodelist'), true);
   assert.equal(isOfficialIndiaPostPinSource('http://www.indiapost.gov.in/rti/pincodelist'), false);
   assert.equal(isOfficialIndiaPostPinSource('https://indiapost.gov.in.example.org/pincode'), false);
+  assert.equal(isOfficialIndiaPostPinSource('https://www.data.gov.in/resource/all-india-pincode-directory-till-last-month'), true);
+  assert.equal(isOfficialIndiaPostPinSource('https://data.gov.in/resource/unrelated-dataset'), false);
+  assert.equal(isOfficialIndiaPostPinSource('https://data.gov.in.attacker.example/resource/all-india-pincode-directory-till-last-month'), false);
 });

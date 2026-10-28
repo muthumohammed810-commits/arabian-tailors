@@ -1,5 +1,8 @@
 import { isOfficialIndiaPostPinSource } from './delivery-rule-csv.mjs';
 
+/** Fixed shop dispatch location shown in Admin; this is not a courier quote. */
+export const DELIVERY_PICKUP_ORIGIN = 'Parappanangadi, Malappuram, Kerala, India';
+
 export type DeliveryRule = { id: string; area?: string; prefix: string; fee: number; enabled: boolean; pinSource?: string; feeSource?: string; imported?: boolean };
 export type DeliveryQuote =
   | { status: 'invalid'; fee: null; message: string }

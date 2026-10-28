@@ -32,11 +32,14 @@ function parseRecords(source) {
 
 const normalizeHeader = value => value.replace(/^\uFEFF/, '').trim().toLowerCase();
 
-/** PIN source URLs must use the official India Post HTTPS domain. */
+/** PIN source URLs must use India Post or the Government of India's postal directory record. */
 export function isOfficialIndiaPostPinSource(value) {
   try {
     const url = new URL(value.trim());
-    return url.protocol === 'https:' && (url.hostname === 'indiapost.gov.in' || url.hostname.endsWith('.indiapost.gov.in'));
+    const indiaPost = url.hostname === 'indiapost.gov.in' || url.hostname.endsWith('.indiapost.gov.in');
+    const governmentPostalDirectory = (url.hostname === 'data.gov.in' || url.hostname === 'www.data.gov.in')
+      && /^\/(resource|catalog)\/all-india-pincode-directory(?:-through-webservice|-till-last-month)?\/?$/.test(url.pathname);
+    return url.protocol === 'https:' && (indiaPost || governmentPostalDirectory);
   } catch {
     return false;
   }
