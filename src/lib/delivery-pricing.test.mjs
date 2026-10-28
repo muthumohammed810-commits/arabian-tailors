@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateConfiguredSubtotal, calculateOrderTotal, DEFAULT_FLAT_DELIVERY_FEE, DELIVERY_PICKUP_ORIGIN, isValidFlatDeliveryFee, matchesOrderBreakdown, publicDeliveryRules, quoteDelivery, quoteFlatDelivery, withFlatDeliveryFee } from './delivery-pricing.ts';
+import { calculateConfiguredSubtotal, calculateOrderTotal, DEFAULT_FLAT_DELIVERY_FEE, DELIVERY_PICKUP_ORIGIN, isValidFlatDeliveryFee, matchesOrderBreakdown, publicDeliveryRules, quoteDelivery, quoteFlatDelivery, resolveFlatDeliveryFee, withDeliveryRestrictionMode, withFlatDeliveryFee } from './delivery-pricing.ts';
 import { createUpiPaymentUrl } from './upi-payment.ts';
 
 test('PIN rules choose the most specific configured prefix', () => {
@@ -57,59 +57,77 @@ test('same configured PIN quote supports both product families and does not add 
   assert.equal(quoteDelivery('110001', rules).status, 'unavailable');
 });
 
-test('flat shop fee defaults to ₹90 and overrides every saved rule amount for Abaya and Kandura', () => {
+test('global shop fee defaults to ₹60 for all valid-format Indian PINs without requiring rules', () => {
   const rules = [
     { id: 'zone', area: 'Supported zone', prefix: '676', fee: 240, enabled: true },
     { id: 'exact', area: 'Exact PIN', prefix: '676303', fee: 18.5, enabled: true },
   ];
-  assert.equal(DEFAULT_FLAT_DELIVERY_FEE, 90);
+  assert.equal(DEFAULT_FLAT_DELIVERY_FEE, 60);
+  assert.equal(resolveFlatDeliveryFee(undefined), 60);
+  assert.equal(resolveFlatDeliveryFee('invalid stored value'), 60);
+  const pins = ['110001', '560001', '676303', '682001'];
   for (const productType of ['Abaya', 'Kandura']) {
-    const quote = quoteFlatDelivery('676303', rules);
-    assert.equal(quote.status, 'available', `${productType} quote should use shared delivery coverage`);
-    assert.equal(quote.fee, 90);
-    assert.equal(calculateOrderTotal(350, quote.fee), 440);
+    for (const pin of pins) {
+      const quote = quoteFlatDelivery(pin, rules);
+      assert.equal(quote.status, 'available', `${productType} should accept valid-format PIN ${pin} by default`);
+      assert.equal(quote.fee, 60);
+      assert.equal(calculateOrderTotal(350, quote.fee), 410);
+    }
   }
-  assert.equal(quoteFlatDelivery('676304', rules).fee, 90);
+  assert.equal(quoteFlatDelivery('999999', []).fee, 60);
+  assert.equal(quoteFlatDelivery('676303', [{ id: 'disabled', prefix: '676303', fee: 0, enabled: false }]).fee, 60);
   assert.equal(quoteFlatDelivery('676303', rules, null, 125.5).fee, 125.5);
 });
 
-test('Admin fee update accepts valid amounts, preserves saved PIN rules, and drives checkout totals', () => {
-  let settings = { storeName: 'ARABIAN TAILORS', flatDeliveryFee: 90, deliveryRules: [{ id: 'approved-area', prefix: '676', fee: 400, enabled: true }] };
-  for (const amount of [100, 120]) {
-    assert.equal(isValidFlatDeliveryFee(amount), true);
-    settings = withFlatDeliveryFee(settings, amount);
-    assert.equal(settings.flatDeliveryFee, amount);
-    assert.deepEqual(settings.deliveryRules, [{ id: 'approved-area', prefix: '676', fee: 400, enabled: true }]);
-    const quote = quoteFlatDelivery('676303', settings.deliveryRules, null, settings.flatDeliveryFee);
-    assert.equal(quote.fee, amount);
-    assert.equal(calculateOrderTotal(350, quote.fee), 350 + amount);
-    assert.equal(matchesOrderBreakdown({ subtotal: 350, deliveryFee: amount, total: 350 + amount }, 350, quote.fee), true);
+test('changing the saved global fee from ₹60 to ₹80 survives reload and updates both checkouts', () => {
+  const existingRules = [{ id: 'owner-rule', prefix: '676', fee: 450, enabled: false }];
+  const initial = { storeName: 'ARABIAN TAILORS', flatDeliveryFee: 60, restrictDeliveryToConfiguredRules: false, deliveryRules: existingRules };
+  assert.equal(isValidFlatDeliveryFee(80), true);
+  const savedSettings = withFlatDeliveryFee(initial, 80);
+  assert.equal(savedSettings.flatDeliveryFee, 80);
+  assert.deepEqual(savedSettings.deliveryRules, existingRules);
+  const reloadedSettings = JSON.parse(JSON.stringify(savedSettings));
+  for (const productType of ['Abaya', 'Kandura']) {
+    for (const pin of ['560001', '676303', '682001']) {
+      const quote = quoteFlatDelivery(pin, reloadedSettings.deliveryRules, null, resolveFlatDeliveryFee(reloadedSettings.flatDeliveryFee), reloadedSettings.restrictDeliveryToConfiguredRules);
+      assert.equal(quote.fee, 80, `${productType} PIN ${pin} should use the saved fee after reload`);
+      const total = calculateOrderTotal(350, quote.fee);
+      assert.equal(total, 430);
+      assert.equal(matchesOrderBreakdown({ subtotal: 350, deliveryFee: 80, total: 430 }, 350, quote.fee), true);
+    }
   }
+  const restrictiveSettings = withDeliveryRestrictionMode(reloadedSettings, true);
+  assert.equal(restrictiveSettings.flatDeliveryFee, 80);
+  assert.deepEqual(restrictiveSettings.deliveryRules, existingRules);
+  assert.equal(quoteFlatDelivery('560001', restrictiveSettings.deliveryRules, null, restrictiveSettings.flatDeliveryFee, restrictiveSettings.restrictDeliveryToConfiguredRules).status, 'unavailable');
+  assert.equal(withDeliveryRestrictionMode(reloadedSettings, 'true'), null);
   for (const invalid of [-1, Number.NaN, Number.POSITIVE_INFINITY, 10_000_001, 1.001]) {
     assert.equal(isValidFlatDeliveryFee(invalid), false);
-    assert.equal(withFlatDeliveryFee(settings, invalid), null);
+    assert.equal(withFlatDeliveryFee(reloadedSettings, invalid), null);
   }
 });
 
-test('flat delivery fee keeps existing supported-area and PIN validation; unsupported/malformed PINs have no fee', () => {
+test('PIN rules restrict delivery only after explicit opt-in; fee remains global and invalid PINs stay blocked', () => {
   const rules = [
     { id: 'zone', prefix: '676', fee: 10, enabled: true },
     { id: 'blocked-exact', prefix: '676303', fee: 0, enabled: false },
   ];
-  assert.equal(quoteFlatDelivery('676303', rules).status, 'unavailable');
-  assert.equal(quoteFlatDelivery('676304', rules).fee, 90);
+  assert.equal(quoteFlatDelivery('676303', rules).fee, 60);
+  assert.equal(quoteFlatDelivery('676304', rules).fee, 60);
+  assert.equal(quoteFlatDelivery('676303', rules, null, 60, true).status, 'unavailable');
+  assert.equal(quoteFlatDelivery('676304', rules, null, 60, true).fee, 60);
+  assert.equal(quoteFlatDelivery('110001', []).fee, 60);
   assert.equal(quoteFlatDelivery('123', rules).status, 'invalid');
   assert.equal(quoteFlatDelivery('000001', rules).status, 'invalid');
-  assert.equal(quoteFlatDelivery('110001', rules).status, 'unavailable');
 });
 
 test('server-side flat amount is independent of browser-submitted delivery fee and final total', () => {
-  const quote = quoteFlatDelivery('676303', [{ id: 'supported', prefix: '676', fee: 9999, enabled: true }]);
+  const quote = quoteFlatDelivery('676303', [{ id: 'reference-only', prefix: '676', fee: 9999, enabled: true }]);
   const serverTotal = calculateOrderTotal(350, quote.fee, 0);
-  assert.equal(quote.fee, 90);
-  assert.equal(serverTotal, 440);
+  assert.equal(quote.fee, 60);
+  assert.equal(serverTotal, 410);
   assert.notEqual(serverTotal, calculateOrderTotal(350, 9999, 0));
-  assert.equal(matchesOrderBreakdown({ subtotal: 350, deliveryFee: 90, discount: 0, total: 440 }, 350, quote.fee), true);
+  assert.equal(matchesOrderBreakdown({ subtotal: 350, deliveryFee: 60, discount: 0, total: 410 }, 350, quote.fee), true);
   assert.equal(matchesOrderBreakdown({ subtotal: 350, deliveryFee: 9999, discount: 0, total: 10349 }, 350, quote.fee), false);
 });
 
@@ -134,16 +152,17 @@ test('public delivery rules retain checkout fields but omit import approval refe
   assert.equal(quoteDelivery('676303', [rule]).fee, 123);
   const [unapproved] = publicDeliveryRules([{ id: 'bad-import', area: 'Area', prefix: '676303', fee: 123, enabled: true, imported: true }]);
   assert.equal(unapproved.enabled, false);
-  assert.equal(quoteFlatDelivery('676303', [unapproved]).status, 'unavailable');
+  assert.equal(quoteFlatDelivery('676303', [unapproved]).fee, 60);
+  assert.equal(quoteFlatDelivery('676303', [unapproved], null, 60, true).status, 'unavailable');
 });
 
 test('server total includes the confirmed delivery fee and UPI uses that exact total', () => {
   const subtotal = 2450;
-  const quote = quoteDelivery('560001', [{ id: 'approved-area', prefix: '560', fee: 85, enabled: true }]);
+  const quote = quoteFlatDelivery('560001', [{ id: 'reference-only', prefix: '560', fee: 85, enabled: true }]);
   assert.equal(quote.status, 'available');
   const savedTotal = calculateOrderTotal(subtotal, quote.fee, 0);
-  assert.equal(savedTotal, 2535);
-  assert.equal(new URL(createUpiPaymentUrl('shop@upi', savedTotal, 'AT-123456')).searchParams.get('am'), '2535.00');
+  assert.equal(savedTotal, 2510);
+  assert.equal(new URL(createUpiPaymentUrl('shop@upi', savedTotal, 'AT-123456')).searchParams.get('am'), '2510.00');
   assert.equal(calculateOrderTotal(100, 20, 10), 110);
   assert.equal(calculateOrderTotal(100, 20, 121), null);
 });

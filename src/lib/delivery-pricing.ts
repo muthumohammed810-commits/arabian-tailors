@@ -3,16 +3,26 @@ import { isOfficialIndiaPostPinSource } from './delivery-rule-csv.mjs';
 /** Fixed shop dispatch location shown in Admin; this is not a courier quote. */
 export const DELIVERY_PICKUP_ORIGIN = 'Parappanangadi, Malappuram, Kerala, India';
 /** Default owner-configured flat delivery fee; Admin can change it centrally. */
-export const DEFAULT_FLAT_DELIVERY_FEE = 90;
+export const DEFAULT_FLAT_DELIVERY_FEE = 60;
 
 /** Settings accept only finite INR amounts with cent precision. */
 export function isValidFlatDeliveryFee(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1_000_000 && Math.round(value * 100) === value * 100;
 }
 
+/** Use the initial fee only when the stored value is absent or invalid. */
+export function resolveFlatDeliveryFee(value: unknown): number {
+  return isValidFlatDeliveryFee(value) ? value : DEFAULT_FLAT_DELIVERY_FEE;
+}
+
 /** Apply a validated fee update while preserving every other saved setting. */
 export function withFlatDeliveryFee(settings: Record<string, unknown>, value: unknown): Record<string, unknown> | null {
   return isValidFlatDeliveryFee(value) ? { ...settings, flatDeliveryFee: value } : null;
+}
+
+/** Save the optional destination restriction mode without changing other settings. */
+export function withDeliveryRestrictionMode(settings: Record<string, unknown>, value: unknown): Record<string, unknown> | null {
+  return typeof value === 'boolean' ? { ...settings, restrictDeliveryToConfiguredRules: value } : null;
 }
 
 export type DeliveryRule = { id: string; area?: string; prefix: string; fee: number; enabled: boolean; pinSource?: string; feeSource?: string; imported?: boolean; rateProvider?: 'DTDC'; rateVerified?: boolean };
@@ -69,15 +79,32 @@ export function quoteDelivery(postal: string, rules: DeliveryRule[] = [], direct
   return { status: 'available', fee, message: fee === 0 ? 'Delivery Fee: FREE' : `Delivery Fee: ₹${fee.toLocaleString('en-IN')}`, ...location };
 }
 
-/** Resolve destination support using enabled rules, but always charge the central flat fee. */
-export function quoteFlatDelivery(postal: string, rules: DeliveryRule[] = [], directory?: KeralaPostalDirectory | null, configuredFee = DEFAULT_FLAT_DELIVERY_FEE): DeliveryQuote {
-  const coverage = quoteDelivery(postal, rules, directory);
-  if (coverage.status !== 'available') return coverage;
-  if (!isValidFlatDeliveryFee(configuredFee)) {
-    return { status: 'unavailable', fee: null, message: 'The flat delivery fee is not configured correctly.' };
-  }
-  const fee = Math.round(configuredFee * 100) / 100;
-  return { ...coverage, fee, message: fee === 0 ? 'Delivery Fee: FREE' : `Delivery Fee: ₹${fee.toLocaleString('en-IN')}` };
+/**
+ * Apply one global shop-configured fee to any format-valid Indian PIN by default.
+ * PIN rules become an opt-in restriction only when the owner explicitly enables
+ * restrictToConfiguredRules; their reference amounts never replace the flat fee.
+ */
+export function quoteFlatDelivery(
+  postal: string,
+  rules: DeliveryRule[] = [],
+  directory?: KeralaPostalDirectory | null,
+  configuredFee: unknown = DEFAULT_FLAT_DELIVERY_FEE,
+  restrictToConfiguredRules = false,
+): DeliveryQuote {
+  const pin = String(postal || '').trim();
+  if (!/^[1-9]\d{5}$/.test(pin)) return { status: 'invalid', fee: null, message: 'Enter a valid 6-digit Indian PIN code to check delivery.' };
+  const coverage = restrictToConfiguredRules ? quoteDelivery(pin, rules, directory) : null;
+  if (coverage && coverage.status !== 'available') return coverage;
+  const fee = resolveFlatDeliveryFee(configuredFee);
+  const directoryEntry = directory?.pins?.find(entry => entry.pin === pin);
+  const firstOffice = directoryEntry?.offices?.[0];
+  const directoryInfo: DeliveryLocation = directoryEntry ? {
+    area: directoryEntry.offices.map(office => office.name).slice(0, 3).join(', ') + (directoryEntry.offices.length > 3 ? ', …' : ''),
+    ...(firstOffice?.district ? { district: firstOffice.district } : {}),
+    ...(firstOffice?.deliveryStatus ? { deliveryStatus: firstOffice.deliveryStatus } : {}),
+  } : {};
+  const roundedFee = Math.round(fee * 100) / 100;
+  return { status: 'available', ...directoryInfo, ...(coverage?.area && !directoryInfo.area ? { area: coverage.area } : {}), fee: roundedFee, message: roundedFee === 0 ? 'Delivery Fee: FREE' : `Delivery Fee: ₹${roundedFee.toLocaleString('en-IN')}` };
 }
 
 type PriceOption = { id: string; name: string; priceAdjustment?: number; basePrice?: number; available?: boolean; visible?: boolean };

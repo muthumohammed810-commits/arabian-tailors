@@ -6,7 +6,7 @@ import { addDefaultCustomization } from '@/lib/customization-defaults';
 import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
 import { getCustomerOrderPaymentFields } from '@/lib/upi-order-policy';
 import { isAbayaReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
-import { calculateConfiguredSubtotal, calculateOrderTotal, DEFAULT_FLAT_DELIVERY_FEE, DELIVERY_PICKUP_ORIGIN, isValidFlatDeliveryFee, matchesOrderBreakdown, publicDeliveryRules, quoteFlatDelivery, withFlatDeliveryFee } from '@/lib/delivery-pricing';
+import { calculateConfiguredSubtotal, calculateOrderTotal, DELIVERY_PICKUP_ORIGIN, isValidFlatDeliveryFee, matchesOrderBreakdown, publicDeliveryRules, quoteFlatDelivery, resolveFlatDeliveryFee, withDeliveryRestrictionMode, withFlatDeliveryFee } from '@/lib/delivery-pricing';
 import { isOfficialIndiaPostPinSource, isValidKeralaPinDirectory } from '@/lib/delivery-rule-csv.mjs';
 
 export const runtime = 'nodejs';
@@ -126,6 +126,10 @@ function validateSettings(value: any) {
       if (!isValidFlatDeliveryFee(item)) return false;
       continue;
     }
+    if (key === 'restrictDeliveryToConfiguredRules') {
+      if (typeof item !== 'boolean') return false;
+      continue;
+    }
     if (key === 'deliveryPickupOrigin') {
       if (item !== DELIVERY_PICKUP_ORIGIN) return false;
       continue;
@@ -214,6 +218,14 @@ export async function PUT(request: Request) {
         const store = await readStore();
         const settings = withFlatDeliveryFee(store.settings, body.flatDeliveryFee);
         if (!settings) return json({ error: 'Enter a valid non-negative flat delivery fee with up to two decimal places.' }, 400);
+        store.settings = settings;
+        await saveStore(store);
+        return json({ ok: true, settings: store.settings });
+      }
+      if (body.action === 'setDeliveryRestrictionMode') {
+        const store = await readStore();
+        const settings = withDeliveryRestrictionMode(store.settings, body.restrictDeliveryToConfiguredRules);
+        if (!settings) return json({ error: 'Choose whether delivery should be restricted to configured PIN rules.' }, 400);
         store.settings = settings;
         await saveStore(store);
         return json({ ok: true, settings: store.settings });
@@ -327,7 +339,7 @@ export async function POST(request: Request) {
     const pricing = calculateConfiguredSubtotal(product, order.design, store.products.filter((item: any) => String(item.category || '').toLowerCase() === 'fabric'));
     if (!pricing.ok) return json({ error: pricing.error }, 400);
     if (Number(order.basePrice) !== pricing.basePrice) return json({ error: 'The product price changed. Refresh your choices before placing the order.' }, 409);
-    const deliveryQuote = quoteFlatDelivery(order.delivery.postal, store.settings.deliveryRules || [], store.settings.keralaPinDirectory || null, store.settings.flatDeliveryFee ?? DEFAULT_FLAT_DELIVERY_FEE);
+    const deliveryQuote = quoteFlatDelivery(order.delivery.postal, store.settings.deliveryRules || [], store.settings.keralaPinDirectory || null, resolveFlatDeliveryFee(store.settings.flatDeliveryFee), store.settings.restrictDeliveryToConfiguredRules === true);
     if (deliveryQuote.status !== 'available') return json({ error: deliveryQuote.message }, deliveryQuote.status === 'invalid' ? 400 : 503);
     const subtotal = pricing.subtotal;
     const deliveryFee = deliveryQuote.fee;
