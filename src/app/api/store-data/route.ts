@@ -6,8 +6,8 @@ import { addDefaultCustomization } from '@/lib/customization-defaults';
 import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
 import { getCustomerOrderPaymentFields } from '@/lib/upi-order-policy';
 import { isAbayaReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
-import { calculateConfiguredSubtotal, calculateOrderTotal, DELIVERY_PICKUP_ORIGIN, publicDeliveryRules, quoteDelivery, type DeliveryRule } from '@/lib/delivery-pricing';
-import { isOfficialIndiaPostPinSource } from '@/lib/delivery-rule-csv.mjs';
+import { calculateConfiguredSubtotal, calculateOrderTotal, DEFAULT_FLAT_DELIVERY_FEE, DELIVERY_PICKUP_ORIGIN, matchesOrderBreakdown, publicDeliveryRules, quoteFlatDelivery } from '@/lib/delivery-pricing';
+import { isOfficialIndiaPostPinSource, isValidKeralaPinDirectory } from '@/lib/delivery-rule-csv.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -122,12 +122,16 @@ function validEmail(value: unknown): value is string { return typeof value === '
 function validateSettings(value: any) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   for (const [key, item] of Object.entries(value)) {
+    if (key === 'flatDeliveryFee') {
+      if (typeof item !== 'number' || !Number.isFinite(item) || item < 0 || item > 1_000_000 || Math.round(item * 100) !== item * 100) return false;
+      continue;
+    }
     if (key === 'deliveryPickupOrigin') {
       if (item !== DELIVERY_PICKUP_ORIGIN) return false;
       continue;
     }
     if (key === 'deliveryRules') {
-      if (!Array.isArray(item) || item.length > 500) return false;
+      if (!Array.isArray(item) || item.length > 10_000) return false;
       const ids = new Set<string>();
       const prefixes = new Set<string>();
       if (!item.every((rule: any) => rule && typeof rule === 'object' && !Array.isArray(rule)
@@ -138,8 +142,15 @@ function validateSettings(value: any) {
         && (rule.pinSource === undefined || validText(rule.pinSource, 500))
         && (rule.feeSource === undefined || validText(rule.feeSource, 500))
         && (rule.imported === undefined || typeof rule.imported === 'boolean')
+        && (rule.rateProvider === undefined || rule.rateProvider === 'DTDC')
+        && (rule.rateVerified === undefined || typeof rule.rateVerified === 'boolean')
+        && (rule.rateProvider !== 'DTDC' || validText(rule.feeSource, 500))
         && (rule.imported !== true || (Number.isInteger(rule.fee) && validText(rule.area, 120) && validText(rule.pinSource, 500) && isOfficialIndiaPostPinSource(rule.pinSource) && validText(rule.feeSource, 500)))
         && typeof rule.enabled === 'boolean')) return false;
+      continue;
+    }
+    if (key === 'keralaPinDirectory') {
+      if (!isValidKeralaPinDirectory(item)) return false;
       continue;
     }
     if (!['storeName','gold','background','heroImage','upiId','accountName','accountNumber','ifsc','bankName','qr'].includes(key) || typeof item !== 'string' || item.length > 2_000_000) return false;
@@ -307,14 +318,14 @@ export async function POST(request: Request) {
     const pricing = calculateConfiguredSubtotal(product, order.design, store.products.filter((item: any) => String(item.category || '').toLowerCase() === 'fabric'));
     if (!pricing.ok) return json({ error: pricing.error }, 400);
     if (Number(order.basePrice) !== pricing.basePrice) return json({ error: 'The product price changed. Refresh your choices before placing the order.' }, 409);
-    const deliveryQuote = quoteDelivery(order.delivery.postal, (Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) as DeliveryRule[]);
-    if (deliveryQuote.status !== 'available') return json({ error: deliveryQuote.message }, 400);
+    const deliveryQuote = quoteFlatDelivery(order.delivery.postal, store.settings.deliveryRules || [], store.settings.keralaPinDirectory || null, store.settings.flatDeliveryFee ?? DEFAULT_FLAT_DELIVERY_FEE);
+    if (deliveryQuote.status !== 'available') return json({ error: deliveryQuote.message }, deliveryQuote.status === 'invalid' ? 400 : 503);
     const subtotal = pricing.subtotal;
     const deliveryFee = deliveryQuote.fee;
     const discount = 0;
     const finalTotal = calculateOrderTotal(subtotal, deliveryFee, discount);
     if (finalTotal === null) return json({ error: 'The order total could not be calculated safely.' }, 400);
-    if (Number(order.subtotal) !== subtotal || Number(order.deliveryFee) !== deliveryFee || Number(order.discount || 0) !== discount || Number(order.total) !== finalTotal) return json({ error: 'The price breakdown changed. Review the latest delivery fee and total before retrying.' }, 409);
+    if (!matchesOrderBreakdown(order, subtotal, deliveryFee, discount)) return json({ error: 'The price breakdown changed. Review the latest delivery fee and total before retrying.' }, 409);
     const clean = {
       id: order.id, customer: order.customer,
       initials: order.initials || order.customer.split(/\s+/).map((part: string) => part[0]).join('').slice(0, 2).toUpperCase(),

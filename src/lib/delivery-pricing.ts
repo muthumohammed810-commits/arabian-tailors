@@ -2,16 +2,23 @@ import { isOfficialIndiaPostPinSource } from './delivery-rule-csv.mjs';
 
 /** Fixed shop dispatch location shown in Admin; this is not a courier quote. */
 export const DELIVERY_PICKUP_ORIGIN = 'Parappanangadi, Malappuram, Kerala, India';
+/** Default owner-configured flat delivery fee; Admin can change it centrally. */
+export const DEFAULT_FLAT_DELIVERY_FEE = 90;
 
-export type DeliveryRule = { id: string; area?: string; prefix: string; fee: number; enabled: boolean; pinSource?: string; feeSource?: string; imported?: boolean };
+export type DeliveryRule = { id: string; area?: string; prefix: string; fee: number; enabled: boolean; pinSource?: string; feeSource?: string; imported?: boolean; rateProvider?: 'DTDC'; rateVerified?: boolean };
+export type KeralaPostalDirectory = { sourceUrl: string; importedAt: string; pins: Array<{ pin: string; offices: Array<{ name: string; district?: string; deliveryStatus?: string }> }> };
+type DeliveryLocation = { area?: string; district?: string; deliveryStatus?: string };
 export type DeliveryQuote =
-  | { status: 'invalid'; fee: null; message: string }
-  | { status: 'unavailable'; fee: null; message: string }
-  | { status: 'available'; fee: number; message: string };
+  | ({ status: 'invalid'; fee: null; message: string } & DeliveryLocation)
+  | ({ status: 'unavailable'; fee: null; message: string } & DeliveryLocation)
+  | ({ status: 'available'; fee: number; message: string } & DeliveryLocation);
 
 /** Keep owner approval/source notes in authenticated Admin data only. */
 export function publicDeliveryRules(rules: DeliveryRule[] = []): DeliveryRule[] {
-  return rules.map(rule => ({ id: rule.id, area: rule.area, prefix: rule.prefix, fee: rule.fee, enabled: rule.enabled }));
+  return rules.map(rule => {
+    const approvedImported = rule.imported !== true || (Number.isInteger(rule.fee) && Boolean(rule.area?.trim()) && isOfficialIndiaPostPinSource(String(rule.pinSource || '')) && Boolean(rule.feeSource?.trim()));
+    return { id: rule.id, area: rule.area, prefix: rule.prefix, fee: rule.fee, enabled: rule.enabled === true && approvedImported, ...(rule.rateProvider === 'DTDC' ? { rateProvider: 'DTDC' as const, rateVerified: Boolean(rule.feeSource?.trim()) } : {}) };
+  });
 }
 
 /** Server-side payable total after the configured delivery fee and discount. */
@@ -20,15 +27,47 @@ export function calculateOrderTotal(subtotal: number, deliveryFee: number, disco
   return Math.round((subtotal + deliveryFee - discount) * 100) / 100;
 }
 
-/** Resolve the most specific configured PIN prefix. No matching rule is never treated as free. */
-export function quoteDelivery(postal: string, rules: DeliveryRule[] = []): DeliveryQuote {
+/** Compare browser-claimed totals against the server's freshly calculated values. */
+export function matchesOrderBreakdown(order: { subtotal?: unknown; deliveryFee?: unknown; discount?: unknown; total?: unknown }, subtotal: number, deliveryFee: number, discount = 0): boolean {
+  const total = calculateOrderTotal(subtotal, deliveryFee, discount);
+  return total !== null && Number(order.subtotal) === subtotal && Number(order.deliveryFee) === deliveryFee && Number(order.discount || 0) === discount && Number(order.total) === total;
+}
+
+/** Resolve an exact approved PIN fee before any broad zone; no match is never treated as free. */
+export function quoteDelivery(postal: string, rules: DeliveryRule[] = [], directory?: KeralaPostalDirectory | null): DeliveryQuote {
   const pin = String(postal || '').trim();
   if (!/^[1-9]\d{5}$/.test(pin)) return { status: 'invalid', fee: null, message: 'Enter a valid 6-digit Indian PIN code to check delivery.' };
-  const rule = rules
-    .filter(item => item?.enabled === true && typeof item.prefix === 'string' && /^\d{3,6}$/.test(item.prefix) && pin.startsWith(item.prefix) && Number.isFinite(item.fee) && item.fee >= 0 && (item.imported !== true || (Number.isInteger(item.fee) && typeof item.area === 'string' && Boolean(item.area.trim()) && typeof item.pinSource === 'string' && isOfficialIndiaPostPinSource(item.pinSource) && typeof item.feeSource === 'string' && Boolean(item.feeSource.trim()))))
+  const directoryEntry = directory?.pins?.find(entry => entry.pin === pin);
+  const firstOffice = directoryEntry?.offices?.[0];
+  const directoryInfo: DeliveryLocation = directoryEntry ? {
+    area: directoryEntry.offices.map(office => office.name).slice(0, 3).join(', ') + (directoryEntry.offices.length > 3 ? ', …' : ''),
+    ...(firstOffice?.district ? { district: firstOffice.district } : {}),
+    ...(firstOffice?.deliveryStatus ? { deliveryStatus: firstOffice.deliveryStatus } : {}),
+  } : {};
+  const validRule = (item: DeliveryRule) => item?.enabled === true && typeof item.prefix === 'string' && /^\d{3,6}$/.test(item.prefix) && Number.isFinite(item.fee) && item.fee >= 0 && Math.round(item.fee * 100) === item.fee * 100 && (item.imported !== true || (Number.isInteger(item.fee) && typeof item.area === 'string' && Boolean(item.area.trim()) && typeof item.pinSource === 'string' && isOfficialIndiaPostPinSource(item.pinSource) && typeof item.feeSource === 'string' && Boolean(item.feeSource.trim())));
+  const exact = rules.find(item => item?.prefix === pin);
+  // An explicit exact-PIN rule, even when disabled, overrides a broader zone.
+  const rule = exact
+    ? validRule(exact) ? exact : undefined
+    : rules
+    .filter(item => item?.enabled === true && typeof item.prefix === 'string' && /^\d{3,6}$/.test(item.prefix) && pin.startsWith(item.prefix) && Number.isFinite(item.fee) && item.fee >= 0 && Math.round(item.fee * 100) === item.fee * 100 && (item.imported !== true || (Number.isInteger(item.fee) && typeof item.area === 'string' && Boolean(item.area.trim()) && typeof item.pinSource === 'string' && isOfficialIndiaPostPinSource(item.pinSource) && typeof item.feeSource === 'string' && Boolean(item.feeSource.trim()))) )
+    .filter(item => item.prefix.length < 6)
     .sort((a, b) => b.prefix.length - a.prefix.length)[0];
-  if (!rule) return { status: 'unavailable', fee: null, message: 'Delivery unavailable for this PIN code. Please contact the atelier.' };
-  return { status: 'available', fee: Math.round(rule.fee), message: rule.fee === 0 ? 'Delivery Fee: FREE' : `Delivery Fee: ₹${Math.round(rule.fee).toLocaleString('en-IN')}` };
+  const location = { ...directoryInfo, ...(rule?.area && !directoryInfo.area ? { area: rule.area } : {}) };
+  if (!rule) return { status: 'unavailable', fee: null, message: 'Delivery pricing unavailable for this PIN code. The shop has not approved an enabled fee.', ...location };
+  const fee = Math.round(rule.fee * 100) / 100;
+  return { status: 'available', fee, message: fee === 0 ? 'Delivery Fee: FREE' : `Delivery Fee: ₹${fee.toLocaleString('en-IN')}`, ...location };
+}
+
+/** Resolve destination support using enabled rules, but always charge the central flat fee. */
+export function quoteFlatDelivery(postal: string, rules: DeliveryRule[] = [], directory?: KeralaPostalDirectory | null, configuredFee = DEFAULT_FLAT_DELIVERY_FEE): DeliveryQuote {
+  const coverage = quoteDelivery(postal, rules, directory);
+  if (coverage.status !== 'available') return coverage;
+  if (!Number.isFinite(configuredFee) || configuredFee < 0 || configuredFee > 1_000_000 || Math.round(configuredFee * 100) !== configuredFee * 100) {
+    return { status: 'unavailable', fee: null, message: 'The flat delivery fee is not configured correctly.' };
+  }
+  const fee = Math.round(configuredFee * 100) / 100;
+  return { ...coverage, fee, message: fee === 0 ? 'Delivery Fee: FREE' : `Delivery Fee: ₹${fee.toLocaleString('en-IN')}` };
 }
 
 type PriceOption = { id: string; name: string; priceAdjustment?: number; basePrice?: number; available?: boolean; visible?: boolean };

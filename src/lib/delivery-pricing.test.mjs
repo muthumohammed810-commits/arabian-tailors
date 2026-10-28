@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateConfiguredSubtotal, calculateOrderTotal, DELIVERY_PICKUP_ORIGIN, publicDeliveryRules, quoteDelivery } from './delivery-pricing.ts';
+import { calculateConfiguredSubtotal, calculateOrderTotal, DEFAULT_FLAT_DELIVERY_FEE, DELIVERY_PICKUP_ORIGIN, matchesOrderBreakdown, publicDeliveryRules, quoteDelivery, quoteFlatDelivery } from './delivery-pricing.ts';
 import { createUpiPaymentUrl } from './upi-payment.ts';
 
 test('PIN rules choose the most specific configured prefix', () => {
@@ -23,6 +23,21 @@ test('shop-approved zone prefixes quote grouped destinations and exact PIN rules
   assert.equal(DELIVERY_PICKUP_ORIGIN, 'Parappanangadi, Malappuram, Kerala, India');
 });
 
+test('official postal directory provides area metadata only; approved exact PIN fees override zones', () => {
+  const directory = { sourceUrl: 'https://www.data.gov.in/resource/all-india-pincode-directory-till-last-month', importedAt: '2026-10-28T00:00:00.000Z', pins: [{ pin: '676303', offices: [{ name: 'Ullanam North B.O', district: 'Malappuram', deliveryStatus: 'Delivery' }] }] };
+  const zone = { id: 'zone', area: 'Malappuram zone', prefix: '676', fee: 90, enabled: true };
+  const exact = { id: 'exact', area: 'Ullanam North', prefix: '676303', fee: 125, enabled: true };
+  const quote = quoteDelivery('676303', [zone, exact], directory);
+  assert.equal(quote.fee, 125);
+  assert.equal(quote.area, 'Ullanam North B.O');
+  assert.equal(quote.district, 'Malappuram');
+  assert.equal(quote.deliveryStatus, 'Delivery');
+  assert.equal(quoteDelivery('676303', [zone], directory).fee, 90);
+  assert.equal(quoteDelivery('676303', [zone, { ...exact, enabled: false }], directory).status, 'unavailable');
+  assert.equal(quoteDelivery('676303', [], directory).status, 'unavailable');
+  assert.equal(quoteDelivery('676304', [], directory).area, undefined);
+});
+
 test('free delivery is explicit and unmatched/invalid PINs never invent a fee', () => {
   assert.deepEqual(quoteDelivery('560001', [{ id: 'free', prefix: '560', fee: 0, enabled: true }]), { status: 'available', fee: 0, message: 'Delivery Fee: FREE' });
   assert.equal(quoteDelivery('56001', []).status, 'invalid');
@@ -42,9 +57,47 @@ test('same configured PIN quote supports both product families and does not add 
   assert.equal(quoteDelivery('110001', rules).status, 'unavailable');
 });
 
+test('flat shop fee defaults to ₹90 and overrides every saved rule amount for Abaya and Kandura', () => {
+  const rules = [
+    { id: 'zone', area: 'Supported zone', prefix: '676', fee: 240, enabled: true },
+    { id: 'exact', area: 'Exact PIN', prefix: '676303', fee: 18.5, enabled: true },
+  ];
+  assert.equal(DEFAULT_FLAT_DELIVERY_FEE, 90);
+  for (const productType of ['Abaya', 'Kandura']) {
+    const quote = quoteFlatDelivery('676303', rules);
+    assert.equal(quote.status, 'available', `${productType} quote should use shared delivery coverage`);
+    assert.equal(quote.fee, 90);
+    assert.equal(calculateOrderTotal(350, quote.fee), 440);
+  }
+  assert.equal(quoteFlatDelivery('676304', rules).fee, 90);
+  assert.equal(quoteFlatDelivery('676303', rules, null, 125.5).fee, 125.5);
+});
+
+test('flat delivery fee keeps existing supported-area and PIN validation; unsupported/malformed PINs have no fee', () => {
+  const rules = [
+    { id: 'zone', prefix: '676', fee: 10, enabled: true },
+    { id: 'blocked-exact', prefix: '676303', fee: 0, enabled: false },
+  ];
+  assert.equal(quoteFlatDelivery('676303', rules).status, 'unavailable');
+  assert.equal(quoteFlatDelivery('676304', rules).fee, 90);
+  assert.equal(quoteFlatDelivery('123', rules).status, 'invalid');
+  assert.equal(quoteFlatDelivery('000001', rules).status, 'invalid');
+  assert.equal(quoteFlatDelivery('110001', rules).status, 'unavailable');
+});
+
+test('server-side flat amount is independent of browser-submitted delivery fee and final total', () => {
+  const quote = quoteFlatDelivery('676303', [{ id: 'supported', prefix: '676', fee: 9999, enabled: true }]);
+  const serverTotal = calculateOrderTotal(350, quote.fee, 0);
+  assert.equal(quote.fee, 90);
+  assert.equal(serverTotal, 440);
+  assert.notEqual(serverTotal, calculateOrderTotal(350, 9999, 0));
+  assert.equal(matchesOrderBreakdown({ subtotal: 350, deliveryFee: 90, discount: 0, total: 440 }, 350, quote.fee), true);
+  assert.equal(matchesOrderBreakdown({ subtotal: 350, deliveryFee: 9999, discount: 0, total: 10349 }, 350, quote.fee), false);
+});
+
 test('PIN 676303 matches only an explicitly enabled configured exact-PIN rule', () => {
   const fixtureOnlyRule = [{ id: 'test-fixture-only', area: 'Test fixture, not shop configuration', prefix: '676303', fee: 123, enabled: true }];
-  assert.deepEqual(quoteDelivery('676303', fixtureOnlyRule), { status: 'available', fee: 123, message: 'Delivery Fee: ₹123' });
+  assert.deepEqual(quoteDelivery('676303', fixtureOnlyRule), { status: 'available', fee: 123, message: 'Delivery Fee: ₹123', area: 'Test fixture, not shop configuration' });
   assert.equal(quoteDelivery('676304', fixtureOnlyRule).status, 'unavailable');
   assert.equal(quoteDelivery('676303', [{ ...fixtureOnlyRule[0], enabled: false }]).status, 'unavailable');
 });
@@ -61,6 +114,9 @@ test('public delivery rules retain checkout fields but omit import approval refe
   const [rule] = publicDeliveryRules([{ id: 'imported', area: 'Area', prefix: '676303', fee: 123, enabled: true, imported: true, pinSource: 'https://www.indiapost.gov.in/rti/pincodelist', feeSource: 'Owner note' }]);
   assert.deepEqual(rule, { id: 'imported', area: 'Area', prefix: '676303', fee: 123, enabled: true });
   assert.equal(quoteDelivery('676303', [rule]).fee, 123);
+  const [unapproved] = publicDeliveryRules([{ id: 'bad-import', area: 'Area', prefix: '676303', fee: 123, enabled: true, imported: true }]);
+  assert.equal(unapproved.enabled, false);
+  assert.equal(quoteFlatDelivery('676303', [unapproved]).status, 'unavailable');
 });
 
 test('server total includes the confirmed delivery fee and UPI uses that exact total', () => {
@@ -72,6 +128,20 @@ test('server total includes the confirmed delivery fee and UPI uses that exact t
   assert.equal(new URL(createUpiPaymentUrl('shop@upi', savedTotal, 'AT-123456')).searchParams.get('am'), '2535.00');
   assert.equal(calculateOrderTotal(100, 20, 10), 110);
   assert.equal(calculateOrderTotal(100, 20, 121), null);
+});
+
+test('server total uses the approved exact-PIN fee when a broader zone also matches', () => {
+  const directory = { sourceUrl: 'https://www.data.gov.in/resource/all-india-pincode-directory-till-last-month', importedAt: '2026-10-28T00:00:00.000Z', pins: [{ pin: '676303', offices: [{ name: 'Ullanam B.O', district: 'Malappuram' }] }] };
+  const quote = quoteDelivery('676303', [
+    { id: 'zone', prefix: '676', area: 'Zone', fee: 80, enabled: true },
+    { id: 'pin', prefix: '676303', area: 'Ullanam', fee: 115, enabled: true },
+  ], directory);
+  assert.equal(quote.fee, 115);
+  assert.equal(calculateOrderTotal(350, quote.fee, 0), 465);
+  assert.equal(quoteDelivery('676303', [
+    { id: 'zone', prefix: '676', area: 'Zone', fee: 80, enabled: true },
+    { id: 'pin-disabled', prefix: '676303', area: 'Ullanam', fee: 115, enabled: false },
+  ], directory).status, 'unavailable');
 });
 
 test('server pricing uses saved model base and configured option prices', () => {
