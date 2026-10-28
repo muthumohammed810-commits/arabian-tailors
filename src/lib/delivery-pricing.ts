@@ -5,6 +5,16 @@ export const DELIVERY_PICKUP_ORIGIN = 'Parappanangadi, Malappuram, Kerala, India
 /** Default owner-configured flat delivery fee; Admin can change it centrally. */
 export const DEFAULT_FLAT_DELIVERY_FEE = 90;
 
+/** Settings accept only finite INR amounts with cent precision. */
+export function isValidFlatDeliveryFee(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1_000_000 && Math.round(value * 100) === value * 100;
+}
+
+/** Apply a validated fee update while preserving every other saved setting. */
+export function withFlatDeliveryFee(settings: Record<string, unknown>, value: unknown): Record<string, unknown> | null {
+  return isValidFlatDeliveryFee(value) ? { ...settings, flatDeliveryFee: value } : null;
+}
+
 export type DeliveryRule = { id: string; area?: string; prefix: string; fee: number; enabled: boolean; pinSource?: string; feeSource?: string; imported?: boolean; rateProvider?: 'DTDC'; rateVerified?: boolean };
 export type KeralaPostalDirectory = { sourceUrl: string; importedAt: string; pins: Array<{ pin: string; offices: Array<{ name: string; district?: string; deliveryStatus?: string }> }> };
 type DeliveryLocation = { area?: string; district?: string; deliveryStatus?: string };
@@ -63,7 +73,7 @@ export function quoteDelivery(postal: string, rules: DeliveryRule[] = [], direct
 export function quoteFlatDelivery(postal: string, rules: DeliveryRule[] = [], directory?: KeralaPostalDirectory | null, configuredFee = DEFAULT_FLAT_DELIVERY_FEE): DeliveryQuote {
   const coverage = quoteDelivery(postal, rules, directory);
   if (coverage.status !== 'available') return coverage;
-  if (!Number.isFinite(configuredFee) || configuredFee < 0 || configuredFee > 1_000_000 || Math.round(configuredFee * 100) !== configuredFee * 100) {
+  if (!isValidFlatDeliveryFee(configuredFee)) {
     return { status: 'unavailable', fee: null, message: 'The flat delivery fee is not configured correctly.' };
   }
   const fee = Math.round(configuredFee * 100) / 100;

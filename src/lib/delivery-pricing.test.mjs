@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateConfiguredSubtotal, calculateOrderTotal, DEFAULT_FLAT_DELIVERY_FEE, DELIVERY_PICKUP_ORIGIN, matchesOrderBreakdown, publicDeliveryRules, quoteDelivery, quoteFlatDelivery } from './delivery-pricing.ts';
+import { calculateConfiguredSubtotal, calculateOrderTotal, DEFAULT_FLAT_DELIVERY_FEE, DELIVERY_PICKUP_ORIGIN, isValidFlatDeliveryFee, matchesOrderBreakdown, publicDeliveryRules, quoteDelivery, quoteFlatDelivery, withFlatDeliveryFee } from './delivery-pricing.ts';
 import { createUpiPaymentUrl } from './upi-payment.ts';
 
 test('PIN rules choose the most specific configured prefix', () => {
@@ -71,6 +71,24 @@ test('flat shop fee defaults to ₹90 and overrides every saved rule amount for 
   }
   assert.equal(quoteFlatDelivery('676304', rules).fee, 90);
   assert.equal(quoteFlatDelivery('676303', rules, null, 125.5).fee, 125.5);
+});
+
+test('Admin fee update accepts valid amounts, preserves saved PIN rules, and drives checkout totals', () => {
+  let settings = { storeName: 'ARABIAN TAILORS', flatDeliveryFee: 90, deliveryRules: [{ id: 'approved-area', prefix: '676', fee: 400, enabled: true }] };
+  for (const amount of [100, 120]) {
+    assert.equal(isValidFlatDeliveryFee(amount), true);
+    settings = withFlatDeliveryFee(settings, amount);
+    assert.equal(settings.flatDeliveryFee, amount);
+    assert.deepEqual(settings.deliveryRules, [{ id: 'approved-area', prefix: '676', fee: 400, enabled: true }]);
+    const quote = quoteFlatDelivery('676303', settings.deliveryRules, null, settings.flatDeliveryFee);
+    assert.equal(quote.fee, amount);
+    assert.equal(calculateOrderTotal(350, quote.fee), 350 + amount);
+    assert.equal(matchesOrderBreakdown({ subtotal: 350, deliveryFee: amount, total: 350 + amount }, 350, quote.fee), true);
+  }
+  for (const invalid of [-1, Number.NaN, Number.POSITIVE_INFINITY, 10_000_001, 1.001]) {
+    assert.equal(isValidFlatDeliveryFee(invalid), false);
+    assert.equal(withFlatDeliveryFee(settings, invalid), null);
+  }
 });
 
 test('flat delivery fee keeps existing supported-area and PIN validation; unsupported/malformed PINs have no fee', () => {

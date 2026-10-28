@@ -6,7 +6,7 @@ import { addDefaultCustomization } from '@/lib/customization-defaults';
 import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
 import { getCustomerOrderPaymentFields } from '@/lib/upi-order-policy';
 import { isAbayaReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
-import { calculateConfiguredSubtotal, calculateOrderTotal, DEFAULT_FLAT_DELIVERY_FEE, DELIVERY_PICKUP_ORIGIN, matchesOrderBreakdown, publicDeliveryRules, quoteFlatDelivery } from '@/lib/delivery-pricing';
+import { calculateConfiguredSubtotal, calculateOrderTotal, DEFAULT_FLAT_DELIVERY_FEE, DELIVERY_PICKUP_ORIGIN, isValidFlatDeliveryFee, matchesOrderBreakdown, publicDeliveryRules, quoteFlatDelivery, withFlatDeliveryFee } from '@/lib/delivery-pricing';
 import { isOfficialIndiaPostPinSource, isValidKeralaPinDirectory } from '@/lib/delivery-rule-csv.mjs';
 
 export const runtime = 'nodejs';
@@ -123,7 +123,7 @@ function validateSettings(value: any) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   for (const [key, item] of Object.entries(value)) {
     if (key === 'flatDeliveryFee') {
-      if (typeof item !== 'number' || !Number.isFinite(item) || item < 0 || item > 1_000_000 || Math.round(item * 100) !== item * 100) return false;
+      if (!isValidFlatDeliveryFee(item)) return false;
       continue;
     }
     if (key === 'deliveryPickupOrigin') {
@@ -209,6 +209,15 @@ export async function PUT(request: Request) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'Invalid request.' }, 400);
   try {
     if (body.resource === 'settings') {
+      if (body.action === 'setFlatDeliveryFee') {
+        if (!isValidFlatDeliveryFee(body.flatDeliveryFee)) return json({ error: 'Enter a valid non-negative flat delivery fee with up to two decimal places.' }, 400);
+        const store = await readStore();
+        const settings = withFlatDeliveryFee(store.settings, body.flatDeliveryFee);
+        if (!settings) return json({ error: 'Enter a valid non-negative flat delivery fee with up to two decimal places.' }, 400);
+        store.settings = settings;
+        await saveStore(store);
+        return json({ ok: true, settings: store.settings });
+      }
       if (!validateSettings(body.settings)) return json({ error: 'Invalid store settings.' }, 400);
       const store = await readStore(); store.settings = body.settings; await saveStore(store); return json({ ok: true, settings: store.settings });
     }
