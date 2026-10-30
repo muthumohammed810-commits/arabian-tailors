@@ -35,3 +35,15 @@ test('same reference with a different amount, delivery, or selected design is no
 test('different order references are never treated as the same order', () => {
   assert.equal(isSameOrderIntent(makeOrder(), makeOrder({ id: 'AT-ffeeddccbbaa99887766554433221100' })), false);
 });
+
+test('WhatsApp contact permission is part of the immutable order intent', () => {
+  assert.equal(isSameOrderIntent(makeOrder({ whatsappConsent: { customerUpdates: true } }), makeOrder({ whatsappConsent: { customerUpdates: false } })), false);
+  assert.equal(isSameOrderIntent(makeOrder({ whatsappConsent: { customerUpdates: true } }), makeOrder({ whatsappConsent: { customerUpdates: true, capturedAt: 'later' } })), true);
+});
+
+test('custom reference order retry stays idempotent after Admin confirms a final price', () => {
+  const incoming = makeOrder({ orderType: 'custom_reference_photo', estimatedTotal: 3200, advanceAmount: 500, finalPrice: null });
+  const existing = makeOrder({ orderType: 'custom_reference_photo', estimatedTotal: 3200, advanceAmount: 500, finalPrice: 6500, finalPriceConfirmed: true, total: 6500, statusPayment: 'Paid' });
+  assert.equal(isSameOrderIntent(existing, incoming), true);
+  assert.equal(isSameOrderIntent(existing, { ...incoming, advanceAmount: 600 }), false);
+});

@@ -1,6 +1,6 @@
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { NextResponse } from 'next/server';
-import { ABAYA_REFERENCE_MAX_BYTES, ABAYA_REFERENCE_PREFIX, ABAYA_REFERENCE_TYPES, isAbayaReferencePath, isValidOrderReference } from '@/lib/abaya-customization';
+import { ABAYA_REFERENCE_MAX_BYTES, ABAYA_REFERENCE_TYPES, isModelReferencePath, isValidOrderReference, MODEL_REFERENCE_PREFIX } from '@/lib/abaya-customization';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,8 +20,8 @@ export async function POST(request: Request) {
       request,
       onBeforeGenerateToken: async (pathname, clientPayload) => {
         const orderId = clientPayload || '';
-        if (!isValidOrderReference(orderId) || !pathname.startsWith(ABAYA_REFERENCE_PREFIX) || !isAbayaReferencePath(pathname, orderId)) {
-          throw new Error('Invalid Abaya reference photo request.');
+        if (!isValidOrderReference(orderId) || !pathname.startsWith(MODEL_REFERENCE_PREFIX) || !isModelReferencePath(pathname, orderId)) {
+          throw new Error('Invalid garment reference photo request.');
         }
         return {
           allowedContentTypes: [...ABAYA_REFERENCE_TYPES],
@@ -34,6 +34,6 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch {
-    return NextResponse.json({ error: 'The Abaya reference photo could not be authorized. Check the file and retry.' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json({ error: 'The model reference photo could not be authorized. Check the file and retry.' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
   }
 }

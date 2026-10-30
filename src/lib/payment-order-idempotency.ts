@@ -11,8 +11,13 @@ export function isSameOrderIntent(existing: any, incoming: any) {
     && existing.subtotal === incoming.subtotal
     && existing.deliveryFee === incoming.deliveryFee
     && (existing.discount || 0) === (incoming.discount || 0)
-    && existing.total === incoming.total
+    // Custom-reference orders may receive an Admin-confirmed final total later;
+    // retries still compare against the immutable estimate from creation.
+    && (existing.estimatedTotal ?? existing.total) === (incoming.estimatedTotal ?? incoming.total)
+    && (existing.orderType || 'standard') === (incoming.orderType || 'standard')
+    && (existing.advanceAmount ?? null) === (incoming.advanceAmount ?? null)
     && existing.paymentMethod === incoming.paymentMethod
+    && (existing.whatsappConsent?.customerUpdates === true) === (incoming.whatsappConsent?.customerUpdates === true)
     && JSON.stringify(existing.delivery) === JSON.stringify(incoming.delivery)
     && JSON.stringify(existing.design) === JSON.stringify(incoming.design);
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ABAYA_REFERENCE_MAX_BYTES, ABAYA_REFERENCE_TYPES, getAbayaCustomerSteps, isAbayaReferencePath, isAbayaReferencePhotoForOrder, isAbayaReferenceUrl, isValidOrderReference, referencePhotoFromDesign, validateAbayaReferenceFile } from './abaya-customization.ts';
+import { ABAYA_REFERENCE_MAX_BYTES, ABAYA_REFERENCE_TYPES, getAbayaCustomerSteps, isAbayaReferencePath, isAbayaReferencePhotoForOrder, isAbayaReferenceUrl, isGarmentReferencePhotoForOrder, isModelReferencePath, isModelReferenceUrl, isValidOrderReference, referencePhotoFromDesign, validateAbayaReferenceFile, validateModelReferenceFile } from './abaya-customization.ts';
 
 test('Abaya customer customization keeps only configured model and size steps', () => {
   const steps = [
@@ -48,4 +48,21 @@ test('order association rejects a photo from another order or non-Abaya product'
   assert.equal(isAbayaReferencePhotoForOrder({ productType: 'Kandura', customerReferencePhoto: photo }, orderId), false);
   assert.equal(isAbayaReferencePhotoForOrder({ productType: 'Abaya', customerReferencePhoto: photo }, `AT-${'d'.repeat(32)}`), false);
   assert.equal(isAbayaReferencePhotoForOrder({ productType: 'Abaya', customerReferencePhoto: { ...photo, fileName: 'x'.repeat(181) } }, orderId), false);
+});
+
+test('a private model reference can be attached to Kandura without choosing a named model', () => {
+  const orderId = `AT-${'e'.repeat(32)}`;
+  const path = `arabian-tailors/order-reference-photos/${orderId}/123e4567-e89b-12d3-a456-426614174000.png`;
+  const url = `https://store.blob.vercel-storage.com/${path}`;
+  const design = { productType: 'Kandura', customerReferencePhoto: { url, fileName: 'reference.png', uploaded: true } };
+  assert.equal(isModelReferencePath(path, orderId), true);
+  assert.equal(isModelReferenceUrl(url, orderId), true);
+  assert.equal(isGarmentReferencePhotoForOrder(design, orderId), true);
+  assert.equal(isGarmentReferencePhotoForOrder(design, orderId, 'Kandura'), true);
+  assert.equal(isGarmentReferencePhotoForOrder(design, orderId, 'Abaya'), false);
+  assert.equal(isGarmentReferencePhotoForOrder({ ...design, productType: 'Attar' }, orderId), false);
+  assert.equal(validateModelReferenceFile({ type: 'image/webp', size: 1_024 }), null);
+  // Existing Abaya paths and associations remain valid.
+  assert.equal(isAbayaReferencePath(path, orderId), true);
+  assert.equal(isAbayaReferenceUrl(url, orderId), true);
 });

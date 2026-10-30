@@ -202,6 +202,23 @@ test('server rejects client-tampered option charges and missing required choices
   assert.equal(calculateConfiguredSubtotal(product, { customization: [{ stepId: 'model', optionId: 'classic', option: 'Classic', priceAdjustment: 0 }] }).ok, false);
 });
 
+test('a required Kandura model can be skipped while other required choices remain validated', () => {
+  const product = {
+    id: 'kandura-test', name: 'Signature Kandura', price: 350, category: 'Kandura',
+    customizationSteps: [
+      { id: 'model', title: 'Choose Your Kandura Model', required: true, options: [{ id: 'saudi', name: 'Saudi Kandura', basePrice: 450 }] },
+      { id: 'size', title: 'Choose Size', required: true, options: [{ id: 'm', name: 'M' }] },
+    ],
+  };
+  assert.deepEqual(calculateConfiguredSubtotal(product, { productType: 'Kandura', customization: [{ stepId: 'size', optionId: 'm', option: 'M' }] }), { ok: true, subtotal: 350, basePrice: 350 });
+  assert.deepEqual(calculateConfiguredSubtotal(product, { productType: 'Kandura', customization: [] }), { ok: false, error: 'Select an option for Choose Size.' });
+  const abaya = { ...product, id: 'abaya-test', name: 'Classic Abaya', category: 'Abaya', customizationSteps: [
+    { id: 'abaya-model', title: 'Select Abaya Model', required: true, options: [{ id: 'classic', name: 'Classic Abaya' }] },
+    { id: 'abaya-size', title: 'Select Size', required: true, options: [{ id: 'm', name: 'M' }] },
+  ] };
+  assert.deepEqual(calculateConfiguredSubtotal(abaya, { productType: 'Abaya', customization: [{ stepId: 'abaya-size', optionId: 'm', option: 'M' }] }), { ok: true, subtotal: 350, basePrice: 350 });
+});
+
 test('model-specific customization prices are counted once and Abaya validates only model and size', () => {
   const kandura = { id: 'kandura', name: 'Kandura', price: 2000, category: 'Kandura', customizationSteps: [
     { id: 'model', title: 'Choose Your Kandura Model', required: true, options: [{ id: 'saudi', name: 'Saudi', priceAdjustment: 0, modelCustomization: { colors: { required: true, visible: true, options: [{ id: 'ivory', name: 'Ivory', priceAdjustment: 25 }] } } }] },

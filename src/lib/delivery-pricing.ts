@@ -121,8 +121,7 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
   const selectedModelId = typeof design?.selectedModel?.id === 'string' ? design.selectedModel.id : '';
   const modelStep = steps.find(step => isAbaya ? /model|abaya\s*style|style/i.test(step.title) : /model/i.test(step.title));
   const model = selectedModelId ? modelStep?.options.find(option => option.id === selectedModelId) : undefined;
-  const hasAbayaReference = Boolean(design?.customerReferencePhoto?.url);
-  if (modelStep?.required && !model && !(isAbaya && hasAbayaReference)) return { ok: false, error: 'Choose an available model before continuing.' };
+  // A named model is optional; customers can describe the garment with a private reference photo or proceed without one.
   if (selectedModelId && !model) return { ok: false, error: 'The selected model is no longer available. Refresh your choices.' };
   const basePrice = model?.basePrice ?? product.price;
   if (!Number.isFinite(basePrice) || basePrice < 0) return { ok: false, error: 'The configured base price is invalid.' };
@@ -144,7 +143,7 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
     if (effectiveStep.available === false) continue;
     const submitted = selections.find((item: any) => item?.stepId === step.id);
     if (!submitted || !submitted.optionId) {
-      if (effectiveStep.required && !(isAbaya && step.id === modelStep?.id && hasAbayaReference)) return { ok: false, error: `Select an option for ${effectiveStep.title}.` };
+      if (effectiveStep.required && step.id !== modelStep?.id) return { ok: false, error: `Select an option for ${effectiveStep.title}.` };
       continue;
     }
     const option = effectiveStep.options.find((candidate: PriceOption) => candidate.id === submitted.optionId);

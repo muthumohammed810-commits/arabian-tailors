@@ -1,6 +1,6 @@
 import { get, list } from '@vercel/blob';
 import { NextRequest, NextResponse } from 'next/server';
-import { isAbayaReferencePhotoForOrder, isAbayaReferenceUrl, isValidOrderReference, referencePhotoFromDesign } from '@/lib/abaya-customization';
+import { isGarmentReferencePhotoForOrder, isModelReferenceUrl, isValidOrderReference, referencePhotoFromDesign } from '@/lib/abaya-customization';
 import { isAdminAuthenticated } from '@/app/admin/guard';
 
 export const runtime = 'nodejs';
@@ -24,10 +24,10 @@ export async function GET(request: NextRequest) {
     if (storedOrder?.statusCode !== 200) return notFound();
     const order = await new Response(storedOrder.stream).json() as { design?: unknown };
     const url = referencePhotoFromDesign(order.design);
-    if (!url || !isAbayaReferencePhotoForOrder(order.design, orderId)) return notFound();
+    if (!url || !isGarmentReferencePhotoForOrder(order.design, orderId)) return notFound();
 
     const photo = await get(url, { access: 'private', useCache: false });
-    if (photo?.statusCode !== 200 || !photo.stream || !isAbayaReferenceUrl(photo.blob.url, orderId)) return notFound();
+    if (photo?.statusCode !== 200 || !photo.stream || !isModelReferenceUrl(photo.blob.url, orderId)) return notFound();
     const contentType = photo.blob.contentType.toLowerCase();
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) return notFound();
     return new NextResponse(photo.stream, {
