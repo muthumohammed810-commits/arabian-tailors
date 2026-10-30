@@ -1,6 +1,7 @@
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/app/admin/guard';
+import { isMeasurementGuideImagePath, MEASUREMENT_GUIDE_MAX_IMAGE_BYTES, measurementGuideMimeTypeForPath } from '@/lib/measurement-guides.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -47,6 +48,11 @@ export async function POST(request: Request) {
       request,
       onBeforeGenerateToken: async (pathname) => {
         if (!await isAdminAuthenticated()) throw new UploadTokenError('ADMIN_AUTH_REQUIRED', 401, 'Sign in required.');
+        if (isMeasurementGuideImagePath(pathname)) return {
+          allowedContentTypes: [measurementGuideMimeTypeForPath(pathname)],
+          addRandomSuffix: false,
+          maximumSizeInBytes: MEASUREMENT_GUIDE_MAX_IMAGE_BYTES,
+        };
         if (!/^arabian-tailors\/product-images\/[0-9a-f-]{36}\.(jpg|png|webp|gif)$/.test(pathname)) throw new UploadTokenError('INVALID_UPLOAD_PATH', 400, 'Invalid image upload path.');
         return {
           allowedContentTypes: allowedTypes,
