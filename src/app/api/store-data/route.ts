@@ -296,6 +296,7 @@ export async function GET() {
       ...product,
       ...(Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
     }));
+    return json({ products, settings: { ...store.settings, deliveryRules: publicDeliveryRules(Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) } });
   } catch { return json({ error: 'Could not load store data.' }, 500); }
 }
 
