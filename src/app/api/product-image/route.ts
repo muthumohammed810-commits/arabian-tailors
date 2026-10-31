@@ -1,7 +1,7 @@
 import { get } from '@vercel/blob';
 import { NextRequest, NextResponse } from 'next/server';
 import { isPublicProductImagePath } from '@/lib/product-image-url';
-import { hasPublishedMeasurementGuideImage, isMeasurementGuideImagePath } from '@/lib/measurement-guides.mjs';
+import { hasPublishedMeasurementGuideImage, hasPublishedMeasurementGuideVideo, isMeasurementGuideImagePath, isMeasurementGuideVideoPath } from '@/lib/measurement-guides.mjs';
 import { isAdminAuthenticated } from '@/app/admin/guard';
 
 async function isPublishedGuideImage(pathname: string) {
@@ -11,6 +11,13 @@ async function isPublishedGuideImage(pathname: string) {
   return hasPublishedMeasurementGuideImage(store.products as any[], pathname);
 }
 
+async function isPublishedGuideVideo(pathname: string) {
+  const stored = await get('arabian-tailors/store.json', { access: 'private', useCache: false });
+  if (stored?.statusCode !== 200 || !stored.stream) return false;
+  const store = await new Response(stored.stream).json() as { products?: unknown };
+  return hasPublishedMeasurementGuideVideo(store.products as any[], pathname);
+}
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -18,13 +25,19 @@ export async function GET(request: NextRequest) {
   const pathname = request.nextUrl.searchParams.get('pathname') || '';
   const productImage = isPublicProductImagePath(pathname);
   const guideImage = isMeasurementGuideImagePath(pathname);
-  if (pathname.length > 300 || (!productImage && !guideImage)) {
+  const guideVideo = isMeasurementGuideVideoPath(pathname);
+  if (pathname.length > 300 || (!productImage && !guideImage && !guideVideo)) {
     return new NextResponse('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
   }
 
   try {
     if (guideImage && !await isAdminAuthenticated()) {
       if (!await isPublishedGuideImage(pathname)) {
+        return new NextResponse('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+      }
+    }
+    if (guideVideo && !await isAdminAuthenticated()) {
+      if (!await isPublishedGuideVideo(pathname)) {
         return new NextResponse('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
       }
     }
@@ -37,7 +50,8 @@ export async function GET(request: NextRequest) {
     }
 
     const contentType = result.blob.contentType.toLowerCase();
-    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(contentType)) {
+    const allowedContentTypes = guideVideo ? ['video/mp4', 'video/webm'] : ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowedContentTypes.includes(contentType)) {
       return new NextResponse('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
     }
 
@@ -47,7 +61,7 @@ export async function GET(request: NextRequest) {
       headers: {
         'Content-Type': contentType,
         'X-Content-Type-Options': 'nosniff',
-        'Cache-Control': guideImage ? 'private, no-store' : 'public, max-age=86400, s-maxage=31536000, immutable',
+          'Cache-Control': guideImage || guideVideo ? 'private, no-store' : 'public, max-age=86400, s-maxage=31536000, immutable',
       },
     });
   } catch (error) {

@@ -9,7 +9,7 @@ import { createCustomReferenceOrderFields, customerPaymentAmount, CUSTOM_REFEREN
 import { isGarmentReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
 import { calculateConfiguredSubtotal, calculateOrderTotal, DELIVERY_PICKUP_ORIGIN, isValidFlatDeliveryFee, matchesOrderBreakdown, publicDeliveryRules, quoteFlatDelivery, resolveFlatDeliveryFee, withDeliveryRestrictionMode, withFlatDeliveryFee } from '@/lib/delivery-pricing';
 import { isOfficialIndiaPostPinSource, isValidKeralaPinDirectory } from '@/lib/delivery-rule-csv.mjs';
-import { isValidMeasurementGuideList, publishedMeasurementGuides } from '@/lib/measurement-guides.mjs';
+import { isValidMeasurementFields, isValidMeasurementGuideList, isValidMeasurementGuideVideo, publishedMeasurementFields, publishedMeasurementGuideVideo, publishedMeasurementGuides } from '@/lib/measurement-guides.mjs';
 import { createWhatsAppNotificationStates, dispatchWhatsAppNotification, getWhatsAppConfiguration, isE164Phone, persistOrderThenNotify, sendWhatsAppTemplate, templateParametersForOrder, WHATSAPP_NOTIFICATION_CHANNELS, WHATSAPP_NOTIFICATION_STATES } from '@/lib/whatsapp-order-notifications.mjs';
 
 export const runtime = 'nodejs';
@@ -74,17 +74,6 @@ function validCustomizationSteps(value: unknown) {
     return step.options.every((option: any) => validOption(option, true));
   });
 }
-function validMeasurementFields(value: unknown) {
-  if (value === undefined) return true;
-  if (!Array.isArray(value)) return false;
-  const ids = new Set<string>();
-  return value.every((field: any) => {
-    if (!field || typeof field !== 'object' || Array.isArray(field) || !validText(field.id, 100) || ids.has(field.id) || !validText(field.name, 120) || !['cm', 'inch'].includes(field.unit) || (field.required !== undefined && typeof field.required !== 'boolean') || (field.available !== undefined && typeof field.available !== 'boolean')) return false;
-    ids.add(field.id);
-    return true;
-  });
-}
-
 async function readBlob(pathname: string) {
   const { blobs } = await list({ prefix: pathname, limit: 1 });
   const blob = blobs.find(item => item.pathname === pathname);
@@ -294,6 +283,8 @@ export async function GET() {
     }
     const products = store.products.filter(p => p.available !== false).map((product: any) => ({
       ...product,
+      ...(Array.isArray(product.measurements) ? { measurements: publishedMeasurementFields(product.measurements, product.id, product.measurementsEnabled !== false && /kandura/i.test(String(product.category || ''))) } : {}),
+      ...(product.measurementGuideVideo ? { measurementGuideVideo: publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id, product.measurementsEnabled !== false && /kandura/i.test(String(product.category || ''))) } : {}),
       ...(Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
     }));
     return json({ products, settings: { ...store.settings, deliveryRules: publicDeliveryRules(Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) } });
@@ -328,7 +319,7 @@ export async function PUT(request: Request) {
       const store = await readStore(); store.settings = body.settings; await saveStore(store); return json({ ok: true, settings: store.settings });
     }
     if (body.resource === 'products') {
-      if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && validMeasurementFields(p.measurements) && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean') && (p.measurementGuides === undefined || isValidMeasurementGuideList(p.measurementGuides, p.id)) && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000) && (p.images === undefined || Array.isArray(p.images) && p.images.every((image: any) => typeof image === 'string' && image.length <= 2000)))) return json({ error: 'Invalid product list.' }, 400);
+      if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && isValidMeasurementFields(p.measurements, p.id) && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean') && (p.measurementGuideVideo === undefined || isValidMeasurementGuideVideo(p.measurementGuideVideo, p.id)) && (p.measurementGuides === undefined || isValidMeasurementGuideList(p.measurementGuides, p.id)) && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000) && (p.images === undefined || Array.isArray(p.images) && p.images.every((image: any) => typeof image === 'string' && image.length <= 2000)))) return json({ error: 'Invalid product list.' }, 400);
       if (new Set(body.products.map((p: any) => p.id)).size !== body.products.length) return json({ error: 'Product IDs must be unique.' }, 400);
       const store = await readStore(); store.products = body.products; await saveStore(store); return json({ ok: true, products: store.products });
     }
@@ -340,6 +331,22 @@ export async function PUT(request: Request) {
       product.measurementGuides = body.guides;
       await saveStore(store);
       return json({ ok: true, productId: product.id, measurementGuides: product.measurementGuides });
+    }
+    if (body.resource === 'measurements') {
+      const hasFields = Object.prototype.hasOwnProperty.call(body, 'measurements');
+      const hasVideo = Object.prototype.hasOwnProperty.call(body, 'measurementGuideVideo');
+      if (body.action !== 'save' || !validText(body.productId, 100) || (!hasFields && !hasVideo)
+        || (hasFields && !isValidMeasurementFields(body.measurements, body.productId))
+        || (hasVideo && !isValidMeasurementGuideVideo(body.measurementGuideVideo, body.productId))) {
+        return json({ error: 'Invalid Kandura measurement media configuration.' }, 400);
+      }
+      const store = await readStore();
+      const product = store.products.find((item: any) => item.id === body.productId);
+      if (!product || !/kandura/i.test(String(product.category || ''))) return json({ error: 'Kandura product not found.' }, 404);
+      if (hasFields) product.measurements = body.measurements;
+      if (hasVideo) product.measurementGuideVideo = body.measurementGuideVideo || undefined;
+      await saveStore(store);
+      return json({ ok: true, productId: product.id, measurements: product.measurements || [], measurementGuideVideo: product.measurementGuideVideo || null });
     }
     if (body.resource === 'productPhotos' || body.resource === 'optionPhotos') {
       if (!validText(body.productId, 100) || !isVercelBlobUrl(body.url) || !['add', 'replace'].includes(body.action)) return json({ error: 'Invalid image update.' }, 400);

@@ -1,7 +1,7 @@
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/app/admin/guard';
-import { isMeasurementGuideImagePath, MEASUREMENT_GUIDE_MAX_IMAGE_BYTES, measurementGuideMimeTypeForPath } from '@/lib/measurement-guides.mjs';
+import { isMeasurementGuideImagePath, isMeasurementGuideVideoPath, MEASUREMENT_GUIDE_MAX_IMAGE_BYTES, MEASUREMENT_GUIDE_MAX_VIDEO_BYTES, measurementGuideMimeTypeForPath, measurementGuideVideoMimeTypeForPath } from '@/lib/measurement-guides.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -48,6 +48,11 @@ export async function POST(request: Request) {
       request,
       onBeforeGenerateToken: async (pathname) => {
         if (!await isAdminAuthenticated()) throw new UploadTokenError('ADMIN_AUTH_REQUIRED', 401, 'Sign in required.');
+        if (isMeasurementGuideVideoPath(pathname)) return {
+          allowedContentTypes: [measurementGuideVideoMimeTypeForPath(pathname)],
+          addRandomSuffix: false,
+          maximumSizeInBytes: MEASUREMENT_GUIDE_MAX_VIDEO_BYTES,
+        };
         if (isMeasurementGuideImagePath(pathname)) return {
           allowedContentTypes: [measurementGuideMimeTypeForPath(pathname)],
           addRandomSuffix: false,

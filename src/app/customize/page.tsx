@@ -20,9 +20,10 @@ type ModelCustomization = { colors?: ManagedModelCategory; fabrics?: ManagedMode
 type ModelCategoryKey = 'colors' | 'fabrics' | 'stitching';
 type CustomizationOption = { id: string; name: string; description?: string; image?: string; images?: string[]; swatch?: string; priceAdjustment?: number; basePrice?: number; stock?: number; available?: boolean; visible?: boolean; modelCustomization?: ModelCustomization };
 type CustomizationStep = { id: string; title: string; description?: string; required?: boolean; available?: boolean; options: CustomizationOption[] };
-type MeasurementField = { id: string; name: string; unit: 'cm' | 'inch'; required?: boolean; available?: boolean };
+type MeasurementField = { id: string; name: string; unit: 'cm' | 'inch'; required?: boolean; available?: boolean; photo?: string };
 type MeasurementGuide = { id: string; title: string; instructions: string; image: string; published: true };
-type StoreProduct = Product & { images?: string[]; available?: boolean; options?: string[]; customizationSteps?: CustomizationStep[]; measurements?: MeasurementField[]; measurementsEnabled?: boolean; measurementGuides?: MeasurementGuide[]; stitchingType?: string; stock?: number };
+type MeasurementGuideVideo = { url: string; instructions: string; published: true };
+type StoreProduct = Product & { images?: string[]; available?: boolean; options?: string[]; customizationSteps?: CustomizationStep[]; measurements?: MeasurementField[]; measurementsEnabled?: boolean; measurementGuides?: MeasurementGuide[]; measurementGuideVideo?: MeasurementGuideVideo; stitchingType?: string; stock?: number };
 type TailoringStyle = { id: string; name: string; desc: string; price: number; image: string };
 type Fabric = { name: string; quality: string; price: number; available: boolean; swatch: string };
 type ModelReferencePhoto = { url: string; preview: string; name: string };
@@ -62,6 +63,13 @@ function CustomOptionImage({ src, name, fallbackColor, modelCard = false }: { sr
     return fallbackColor ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: fallbackColor }} aria-label={`${name} swatch`} /> : null;
   }
   return <img className="dynamic-option-image" src={productImageSource(src)} alt={`${name}`} onError={() => setFailed(true)} />;
+}
+
+function CustomerMeasurementField({field,value,onChange}:{field:MeasurementField;value:string;onChange:(value:string)=>void}) {
+  return <div className="customer-measurement-field" key={field.id}>
+    {field.photo&&<img className="customer-measurement-reference-photo" src={productImageSource(field.photo)} alt={`${field.name} measurement reference`} loading="lazy"/>}
+    <label className="subtle">{field.name}{field.required===true?' *':''}<div className="measurement-input"><input type="number" min="0" required={field.required===true} value={value} onChange={event=>onChange(event.target.value)} placeholder={field.unit}/><span>{field.unit}</span></div></label>
+  </div>;
 }
 
 export default function Customize() {
@@ -198,6 +206,7 @@ export default function Customize() {
     ? configuredProduct ? (measurementsEnabled ? measurementFields : []) : (['chest', 'shoulder', 'sleeve', 'length'] as const).map(name => ({ id: name, name, unit: unit as 'cm'|'inch', required: true }))
     : [];
   const measurementGuides = (configuredProduct?.measurementGuides || []).filter(guide => guide.published === true && Boolean(guide.image));
+  const measurementGuideVideo = isKandura && configuredProduct?.measurementGuideVideo?.published === true ? configuredProduct.measurementGuideVideo : undefined;
   const missingCustomMeasurements = customOptionMeasurements.some(field => field.required === true && !measurements[field.id]?.trim()) || (showMeasurements && step === measurementStep && measurementFields.some(field => field.required === true && !measurements[field.id]?.trim()));
   const modelStep = customSteps.find(item => /model/i.test(item.title));
   const colorStep = customSteps.find(item => /colou?r/i.test(item.title));
@@ -450,7 +459,7 @@ export default function Customize() {
               </>
             ) : null}
 
-            {showMeasurements && step === measurementStep && <div className="customer-measurement-panel"><h2 className="serif customizer-step-title">Custom size / measurements</h2><p className="subtle">Enter the measurements requested by the atelier. Your tailor will review them with the order.</p><div className="measurement-grid">{measurementFields.map(field=><label className="subtle" key={field.id}>{field.name}{field.required===true?' *':''}<div className="measurement-input"><input type="number" min="0" required={field.required===true} value={measurements[field.id]||''} onChange={event=>setMeasurements(previous=>({...previous,[field.id]:event.target.value}))} placeholder={field.unit}/><span>{field.unit}</span></div></label>)}</div></div>}
+            {showMeasurements && step === measurementStep && <div className="customer-measurement-panel"><h2 className="serif customizer-step-title">Custom size / measurements</h2><p className="subtle">Enter the measurements requested by the atelier. Your tailor will review them with the order.</p><div className="measurement-grid">{measurementFields.map(field=><CustomerMeasurementField key={field.id} field={field} value={measurements[field.id]||''} onChange={value=>setMeasurements(previous=>({...previous,[field.id]:value}))}/>)}</div></div>}
 
             {hasGarmentDefaults && step === 1 && <><h2 className="serif customizer-step-title">Choose the cloth</h2><p className="subtle">Consider the hand, weight and way it falls.</p>{serviceFabrics.map((item, index) => <button key={item.name} disabled={!item.available} className={`fabric-choice ${index === fabric ? 'selected' : ''}`} onClick={() => setFabric(index)}><span className="fabric-swatch" style={{ background: item.swatch }} /><span className="fabric-choice-copy"><b className="serif">{item.name}</b><span className="subtle">{item.quality} · {item.available ? 'Available' : 'Unavailable'}</span></span><span>₹{item.price.toLocaleString('en-IN')}</span></button>)}</>}
 
@@ -459,7 +468,7 @@ export default function Customize() {
               const chosen = customSelections[item.id];
                   const visibleOptions = item.options.filter(option => option.visible !== false && option.available !== false && (option.stock === undefined || option.stock > 0));
               const isModelStep = /model/i.test(item.title);
-              const showCustomMeasurements = needsCustomMeasurements && (customOptionMeasurements.length > 0 || (isKandura && measurementGuides.length > 0));
+              const showCustomMeasurements = needsCustomMeasurements && (customOptionMeasurements.length > 0 || (isKandura && (measurementGuides.length > 0 || Boolean(measurementGuideVideo))));
               return <>
                 {hasModelStep && step === 0 && configuredProduct?.images?.length ? <div className="product-image-gallery">{configuredProduct.images.map((image, index) => <img key={`${image}-${index}`} src={productImageSource(image)} alt={`${configuredProduct.name} image ${index + 1}`} />)}</div> : null}
                 <h2 className="serif customizer-step-title">{item.title}</h2>
@@ -499,7 +508,7 @@ export default function Customize() {
                 {isModelStep && isCustomReferenceOrder && <div className="custom-reference-payment-highlights"><section className="custom-reference-advance"><span className="eyebrow">₹500 ADVANCE PAYMENT</span><strong>Pay ₹500 to confirm your custom order.</strong><p>₹500 is an advance, not the full stitching price. The final stitching price will be communicated through WhatsApp after our team reviews your uploaded reference photo.</p></section><section className="custom-reference-refund"><span className="eyebrow">100% REFUND GUARANTEE</span><strong>₹500 FULL REFUND</strong><p>If we are unable to create your requested design, your ₹500 advance will be fully refunded.</p></section></div>}
                 {showCustomMeasurements && <section className="inline-custom-measurements">
                   <button type="button" className="inline-custom-measurements-toggle" aria-expanded={customSizeExpanded} onClick={() => setCustomSizeExpanded(value => !value)}><span><b>Custom measurements</b><small className="subtle">Enter the fields requested by the atelier</small></span><span aria-hidden="true">{customSizeExpanded ? '−' : '+'}</span></button>
-                  {customSizeExpanded && <>{customOptionMeasurements.length > 0 && <div className="measurement-grid">{customOptionMeasurements.map(field => <label className="subtle" key={field.id}>{field.name}{field.required === true ? ' *' : ''}<input type="number" min="0" required={field.required === true} value={measurements[field.id] || ''} onChange={event => setMeasurements(previous => ({ ...previous, [field.id]: event.target.value }))} placeholder={field.unit} /></label>)}<label className="subtle">Unit<select value={unit} onChange={event => setUnit(event.target.value)}><option>cm</option><option>inch</option></select></label></div>}{isKandura && measurementGuides.length > 0 && <section className="customer-measurement-guides" aria-label="Kandura measurement guides"><h4 className="serif">Measurement guide</h4><p className="subtle">Follow the atelier’s reference photos while entering your measurements.</p><div className="customer-measurement-guide-grid">{measurementGuides.map(guide => <figure key={guide.id}><img src={productImageSource(guide.image)} alt={guide.title} loading="lazy"/><figcaption><b>{guide.title}</b>{guide.instructions&&<p className="subtle">{guide.instructions}</p>}</figcaption></figure>)}</div></section>}</>}
+                  {customSizeExpanded && <>{customOptionMeasurements.length > 0 && <div className="measurement-grid">{customOptionMeasurements.map(field => <CustomerMeasurementField key={field.id} field={field} value={measurements[field.id]||''} onChange={value=>setMeasurements(previous=>({...previous,[field.id]:value}))}/>)}<label className="subtle">Unit<select value={unit} onChange={event => setUnit(event.target.value)}><option>cm</option><option>inch</option></select></label></div>}{isKandura && measurementGuides.length > 0 && <section className="customer-measurement-guides" aria-label="Kandura measurement guides"><h4 className="serif">Measurement guide</h4><p className="subtle">Follow the atelier’s reference photos while entering your measurements.</p><div className="customer-measurement-guide-grid">{measurementGuides.map(guide => <figure key={guide.id}><img src={productImageSource(guide.image)} alt={guide.title} loading="lazy"/><figcaption><b>{guide.title}</b>{guide.instructions&&<p className="subtle">{guide.instructions}</p>}</figcaption></figure>)}</div></section>}{measurementGuideVideo&&<section className="customer-measurement-video" aria-label="Kandura measurement guide video"><h4 className="serif">Measurement Guide Video</h4>{measurementGuideVideo.instructions&&<p className="subtle">{measurementGuideVideo.instructions}</p>}<video src={productImageSource(measurementGuideVideo.url)} controls playsInline preload="metadata" aria-label="Kandura measurement guide"/></section>}</>}
                 </section>}
               </>;
             })()}

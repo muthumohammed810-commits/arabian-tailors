@@ -1,4 +1,4 @@
-import { isMeasurementGuideImagePath } from './measurement-guides.mjs';
+import { isMeasurementGuideImagePath, isMeasurementGuideVideoPath } from './measurement-guides.mjs';
 
 const PRIVATE_BLOB_HOST_SUFFIX = '.private.blob.vercel-storage.com';
 const PRODUCT_IMAGE_PREFIX = 'arabian-tailors/product-images/';
@@ -20,7 +20,7 @@ export function productImageSource(value: string): string {
     const url = new URL(value);
     if (url.protocol !== 'https:' || !url.hostname.endsWith(PRIVATE_BLOB_HOST_SUFFIX)) return value;
     const pathname = decodeURIComponent(url.pathname.slice(1));
-    if (!isPublicProductImagePath(pathname) && !isMeasurementGuideImagePath(pathname)) return value;
+    if (!isPublicProductImagePath(pathname) && !isMeasurementGuideImagePath(pathname) && !isMeasurementGuideVideoPath(pathname)) return value;
     return `/api/product-image?pathname=${encodeURIComponent(pathname)}`;
   } catch {
     return value;
