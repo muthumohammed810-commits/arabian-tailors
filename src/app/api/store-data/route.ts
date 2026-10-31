@@ -9,6 +9,7 @@ import { createCustomReferenceOrderFields, customerPaymentAmount, CUSTOM_REFEREN
 import { isGarmentReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
 import { calculateConfiguredSubtotal, calculateOrderTotal, DELIVERY_PICKUP_ORIGIN, isValidFlatDeliveryFee, matchesOrderBreakdown, publicDeliveryRules, quoteFlatDelivery, resolveFlatDeliveryFee, withDeliveryRestrictionMode, withFlatDeliveryFee } from '@/lib/delivery-pricing';
 import { isOfficialIndiaPostPinSource, isValidKeralaPinDirectory } from '@/lib/delivery-rule-csv.mjs';
+import { publicStoreSettings } from '@/lib/public-store-settings.mjs';
 import { isValidMeasurementFields, isValidMeasurementGuideList, isValidMeasurementGuideVideo, publishedMeasurementFields, publishedMeasurementGuideVideo, publishedMeasurementGuides } from '@/lib/measurement-guides.mjs';
 import { createWhatsAppNotificationStates, dispatchWhatsAppNotification, getWhatsAppConfiguration, isE164Phone, persistOrderThenNotify, sendWhatsAppTemplate, templateParametersForOrder, WHATSAPP_NOTIFICATION_CHANNELS, WHATSAPP_NOTIFICATION_STATES } from '@/lib/whatsapp-order-notifications.mjs';
 
@@ -287,7 +288,8 @@ export async function GET() {
       ...(product.measurementGuideVideo ? { measurementGuideVideo: publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id, product.measurementsEnabled !== false && /kandura/i.test(String(product.category || ''))) } : {}),
       ...(Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
     }));
-    return json({ products, settings: { ...store.settings, deliveryRules: publicDeliveryRules(Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) } });
+    const storefrontSettings = publicStoreSettings(store.settings);
+    return json({ products, settings: { ...storefrontSettings, deliveryRules: publicDeliveryRules(Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) } });
   } catch { return json({ error: 'Could not load store data.' }, 500); }
 }
 
