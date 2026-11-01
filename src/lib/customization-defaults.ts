@@ -22,29 +22,14 @@ export const customizationDefaults: Record<'kandura' | 'abaya', CustomizationDef
     { title: 'Priority / Extra customization', required: false, options: priorityOptions() },
   ],
   abaya: [
-    { title: 'Abaya Style', required: true, options: options(['Classic', 'Open Front', 'Closed Front', 'Kimono', 'Butterfly', 'A-Line', 'Dubai', 'Saudi', 'Emirati', 'Custom']) },
-    { title: 'Fabric', required: true, options: options(['Nida', 'Crepe', 'Chiffon', 'Linen', 'Cotton', 'Satin', 'Jersey', 'Premium Fabric', 'Custom Fabric']) },
-    { title: 'Color', required: true, options: options(['Black', 'Navy', 'Charcoal', 'Brown', 'Beige', 'Taupe', 'Grey', 'Cream', 'Ivory', 'Custom Color']) },
-    { title: 'Sleeve Style', required: true, options: options(['Standard', 'Bell', 'Flared', 'Bishop', 'Batwing', 'Cuffed', 'Custom']) },
-    { title: 'Front Style', required: true, options: options(['Open Front', 'Closed Front', 'Wrap', 'Button Front', 'Zip Front', 'Custom']) },
-    { title: 'Closure', required: true, options: options(['None', 'Hidden Hooks', 'Buttons', 'Zipper', 'Tie Belt', 'Snaps', 'Custom']) },
-    { title: 'Embroidery', required: true, options: options(['None', 'Minimal', 'Floral', 'Geometric', 'Premium', 'Royal', 'Custom']) },
-    { title: 'Border', required: true, options: options(['Plain', 'Piping', 'Embroidered Border', 'Beaded Border', 'Lace', 'Contrast Trim', 'Custom']) },
-    { title: 'Cuff', required: true, options: options(['Standard', 'Button Cuff', 'Embroidered Cuff', 'Flared Cuff', 'Folded Cuff', 'Custom']) },
-    { title: 'Pocket', required: true, options: options(['No Pocket', 'Side Pockets', 'Hidden Pocket', 'Patch Pocket', 'Custom']) },
-    { title: 'Hijab Option', required: true, options: options(['None', 'Matching Hijab', 'Matching Sheyla', 'Custom']) },
-    { title: 'Length', required: true, options: options(['Standard', 'Petite', 'Tall', 'Custom Measurement']) },
-    { title: 'Fit', required: true, options: options(['Regular', 'Relaxed', 'Loose', 'Custom']) },
-    { title: 'Size', required: true, options: options(['S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'Custom Measurements']) },
-    { title: 'Personalization', required: true, options: options(['None', 'Name Embroidery', 'Initials', 'Custom Text']) },
-    { title: 'Custom Measurements', required: true, available: false, options: options(['Standard Measurements', 'Enter Custom Measurements']) },
-    { title: 'Production & Delivery', required: true, options: productionOptions() },
+    { title: 'Abaya Style', required: false, options: options(['Classic', 'Open Front', 'Closed Front', 'Kimono', 'Butterfly', 'A-Line', 'Dubai', 'Saudi', 'Emirati', 'Custom']) },
+    { title: 'Size', required: true, options: options(['S', 'M', 'L', 'XL', 'XXL']) },
   ],
 };
 
 export const defaultMeasurements: Record<'kandura' | 'abaya', DefaultMeasurement[]> = {
   kandura: ['Chest', 'Shoulder', 'Sleeve Length', 'Length', 'Neck', 'Width'].map(name => ({ name, unit: 'cm', required: false, available: true })),
-  abaya: ['Bust', 'Shoulder', 'Sleeve Length', 'Length', 'Waist', 'Hip'].map(name => ({ name, unit: 'cm', required: false, available: true })),
+  abaya: [],
 };
 
 type StoreForCustomizationMerge = { products: any[] };
@@ -137,10 +122,34 @@ export function addDefaultCustomization(store: StoreForCustomizationMerge) {
     const garment = category === 'kandura' || category === 'abaya' ? category : undefined;
     const templates = garment ? customizationDefaults[garment] : undefined;
     if (!templates) continue;
+    if (garment === 'abaya' && Array.isArray(product.customizationSteps) && product.customizationSteps.length > 0) {
+      const sizeTemplate = customizationDefaults.abaya.find(step => /^size$/i.test(step.title))!;
+      let sizeStep = product.customizationSteps.find((candidate: any) => candidate && typeof candidate.title === 'string' && /^(?:(?:choose|select)\s+)?(?:abaya\s+)?size(?:\s+selection)?$/i.test(candidate.title.trim()));
+      if (!sizeStep) {
+        const baseId = `custom-${String(product.id).slice(-32)}-size`;
+        let id = baseId, suffix = 2;
+        while (product.customizationSteps.some((candidate: any) => candidate?.id === id)) id = `${baseId}-${suffix++}`;
+        sizeStep = { id, title: 'Size', description: '', required: true, available: true, options: [] };
+        product.customizationSteps.push(sizeStep);
+        changed = true;
+      }
+      if (!Array.isArray(sizeStep.options)) { sizeStep.options = []; changed = true; }
+      if (sizeStep.required !== true) { sizeStep.required = true; changed = true; }
+      if (sizeStep.available !== true) { sizeStep.available = true; changed = true; }
+      for (const option of sizeTemplate.options) {
+        const exists = sizeStep.options.some((candidate: any) => candidate && typeof candidate.name === 'string' && normalizedChoice(candidate.name).toUpperCase() === option.name);
+        if (exists) continue;
+        const baseId = `opt-abaya-size-${option.name.toLowerCase()}`;
+        let id = baseId, suffix = 2;
+        while (sizeStep.options.some((candidate: any) => candidate?.id === id)) id = `${baseId}-${suffix++}`;
+        sizeStep.options.push({ id, ...option });
+        changed = true;
+      }
+    }
     const needsInitialConfiguration = !Array.isArray(product.customizationSteps) || product.customizationSteps.length === 0;
     if (!needsInitialConfiguration) {
       if (!Array.isArray(product.measurements)) product.measurements = [];
-      if (product.measurementsEnabled === undefined) { product.measurementsEnabled = true; changed = true; }
+      if (product.measurementsEnabled === undefined) { product.measurementsEnabled = garment !== 'abaya'; changed = true; }
       if (garment === 'abaya') {
         const legacyMeasurementsStep = product.customizationSteps.find((candidate: any) => candidate && typeof candidate.title === 'string' && normalizedChoice(candidate.title) === 'custom measurements');
         if (legacyMeasurementsStep && legacyMeasurementsStep.available === undefined) { legacyMeasurementsStep.available = false; changed = true; }
@@ -218,7 +227,7 @@ export function addDefaultCustomization(store: StoreForCustomizationMerge) {
       }
     }
     if (product.measurementsEnabled === undefined) {
-      product.measurementsEnabled = true;
+      product.measurementsEnabled = garment !== 'abaya';
       changed = true;
     }
   }

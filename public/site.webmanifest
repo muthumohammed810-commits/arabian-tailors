@@ -1,0 +1,13 @@
+{
+  "name": "ARABIAN TAILORS Admin",
+  "short_name": "Arabian Tailors",
+  "description": "ARABIAN TAILORS Admin order management",
+  "start_url": "/admin",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0b0d",
+  "theme_color": "#0b0b0d",
+  "icons": [
+    { "src": "/icons/arabian-tailors.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

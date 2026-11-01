@@ -9,9 +9,14 @@ import { createCustomReferenceOrderFields, customerPaymentAmount, CUSTOM_REFEREN
 import { isGarmentReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
 import { calculateConfiguredSubtotal, calculateOrderTotal, DELIVERY_PICKUP_ORIGIN, isValidFlatDeliveryFee, matchesOrderBreakdown, publicDeliveryRules, quoteFlatDelivery, resolveFlatDeliveryFee, withDeliveryRestrictionMode, withFlatDeliveryFee } from '@/lib/delivery-pricing';
 import { isOfficialIndiaPostPinSource, isValidKeralaPinDirectory } from '@/lib/delivery-rule-csv.mjs';
-import { publicStoreSettings } from '@/lib/public-store-settings.mjs';
+import { createWhatsAppNotificationStates, dispatchWhatsAppNotification, getWhatsAppConfiguration, isE164Phone, sendWhatsAppTemplate, templateParametersForOrder, WHATSAPP_NOTIFICATION_CHANNELS, WHATSAPP_NOTIFICATION_STATES } from '@/lib/whatsapp-order-notifications.mjs';
+import { notifyAdminDevicesOfOrder } from '@/lib/admin-push-server';
+import { persistOrderThenNotifyAdminPush } from '@/lib/admin-push-notifications.mjs';
 import { isValidMeasurementFields, isValidMeasurementGuideList, isValidMeasurementGuideVideo, publishedMeasurementFields, publishedMeasurementGuideVideo, publishedMeasurementGuides } from '@/lib/measurement-guides.mjs';
-import { createWhatsAppNotificationStates, dispatchWhatsAppNotification, getWhatsAppConfiguration, isE164Phone, persistOrderThenNotify, sendWhatsAppTemplate, templateParametersForOrder, WHATSAPP_NOTIFICATION_CHANNELS, WHATSAPP_NOTIFICATION_STATES } from '@/lib/whatsapp-order-notifications.mjs';
+import { canReviewPaymentStatus, initialCustomerOrderStatus, isUntrackedDeliveryStatusTransition, paidOrderCustomerEntries, summarizeOrders, updateDeliveryStatus } from '@/lib/order-admin.mjs';
+import { normalizePaymentStatus, paymentAuditFields, recordPaymentConfirmation } from '@/lib/order-admin.mjs';
+import { listAllBlobPages } from '@/lib/blob-pagination.mjs';
+import { publicStoreSettings } from '@/lib/public-store-settings.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,7 +25,6 @@ const STORE_FILE = 'arabian-tailors/store.json';
 const ORDER_PREFIX = 'arabian-tailors/orders/';
 const ADMIN_ORDER_BASE_URL = 'https://arabian-tailors.vercel.app';
 const statuses = ['New', 'In production', 'Ready to ship', 'Delivered', 'Cancelled'] as const;
-const paymentStatuses = ['Pending verification', 'Paid', 'Failed', 'Refunded'] as const;
 type Store = { products: any[]; settings: Record<string, any> };
 const defaultStore = (): Store => ({ products: catalog.map(p => ({ ...p, stock: 0, available: true, stitchingType: '', options: [] })), settings: {} });
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -88,7 +92,7 @@ async function readStore(): Promise<Store> {
   return { products: stored.products, settings: stored.settings && typeof stored.settings === 'object' ? stored.settings : {} };
 }
 async function listOrders() {
-  const { blobs } = await list({ prefix: ORDER_PREFIX, limit: 1000 });
+  const blobs = await listAllBlobPages((options) => list(options), { prefix: ORDER_PREFIX, limit: 1000 });
   return (await Promise.all(blobs.map(async blob => {
     const result = await get(blob.url, { access: 'private', useCache: false });
     return result?.statusCode === 200 ? await new Response(result.stream).json() : null;
@@ -173,12 +177,15 @@ function safePayment(order: any) {
     ...(order.orderType === CUSTOM_REFERENCE_ORDER_TYPE ? {
       estimatedTotal: Number.isFinite(order.estimatedTotal) ? order.estimatedTotal : order.total,
       advanceAmount: 500,
-      advanceStatus: paymentStatuses.includes(order.statusPayment) ? order.statusPayment : 'Pending verification',
+      advanceStatus: normalizePaymentStatus(order.statusPayment),
       finalPrice: Number.isFinite(order.finalPrice) ? order.finalPrice : null,
       finalPriceConfirmed: order.finalPriceConfirmed === true,
       remainingBalance: Number.isFinite(order.remainingBalance) ? order.remainingBalance : null,
     } : {}),
     date: order.date, total: order.total, subtotal: order.subtotal, deliveryFee: order.deliveryFee, discount: order.discount, status: order.status, tone: order.tone,
+    ...paymentAuditFields(order),
+    ...(typeof order.deliveredAt === 'string' ? { deliveredAt: order.deliveredAt } : { deliveredAt: null }),
+    ...(Array.isArray(order.deliveryHistory) ? { deliveryHistory: order.deliveryHistory.filter((entry: any) => entry && typeof entry.status === 'string' && typeof entry.at === 'string').map((entry: any) => ({ status: entry.status, at: entry.at, ...(typeof entry.admin === 'string' ? { admin: entry.admin } : {}) })) } : {}),
     delivery: order.delivery, design: order.design,
     ...(order.whatsappConsent && typeof order.whatsappConsent.customerUpdates === 'boolean' ? { whatsappConsent: { customerUpdates: order.whatsappConsent.customerUpdates, ...(typeof order.whatsappConsent.capturedAt === 'string' ? { capturedAt: order.whatsappConsent.capturedAt } : {}) } } : {}),
     ...(order.whatsappNotifications && typeof order.whatsappNotifications === 'object' ? { whatsappNotifications: Object.fromEntries(WHATSAPP_NOTIFICATION_CHANNELS.map((channel) => {
@@ -195,7 +202,7 @@ function safePayment(order: any) {
       }];
     })) } : {}),
     paymentMethod: ['upi','card','cod'].includes(order.paymentMethod) ? order.paymentMethod : 'Not provided',
-    statusPayment: paymentStatuses.includes(order.statusPayment) ? order.statusPayment : 'Pending verification',
+    statusPayment: normalizePaymentStatus(order.statusPayment),
   };
 }
 function validEmail(value: unknown): value is string { return typeof value === 'string' && validText(value, 254) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value); }
@@ -275,18 +282,14 @@ export async function GET() {
     if (await isAdminAuthenticated()) {
       if (migratedCustomization) await saveStore(store);
       const orders = (await listOrders()).map(safePayment);
-      const customers = [...new Map(orders.filter((o: any) => o.delivery?.email || o.customer).map((o: any) => {
-        const d = o.delivery || {};
-        const key = String(d.email || d.phone || o.customer).toLowerCase();
-        return [key, { id: key, name: o.customer || d.name || '', email: d.email || '', phone: d.phone || '', address: d.address || '', city: d.city || '', postal: d.postal || '', orderCount: orders.filter((x: any) => String(x.delivery?.email || x.delivery?.phone || x.customer).toLowerCase() === key).length }];
-      }))].map(([, customer]) => customer);
-      return json({ ...store, orders, customers });
+      const customers = paidOrderCustomerEntries(orders);
+      return json({ ...store, orders, customers, orderSummary: summarizeOrders(orders) });
     }
     const products = store.products.filter(p => p.available !== false).map((product: any) => ({
       ...product,
-      ...(Array.isArray(product.measurements) ? { measurements: publishedMeasurementFields(product.measurements, product.id, product.measurementsEnabled !== false && /kandura/i.test(String(product.category || ''))) } : {}),
-      ...(product.measurementGuideVideo ? { measurementGuideVideo: publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id, product.measurementsEnabled !== false && /kandura/i.test(String(product.category || ''))) } : {}),
-      ...(Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
+      ...(/kandura/i.test(String(product.category || '')) && Array.isArray(product.measurements) ? { measurements: publishedMeasurementFields(product.measurements, product.id, product.measurementsEnabled !== false) } : {}),
+      ...(/kandura/i.test(String(product.category || '')) && product.measurementGuideVideo ? { measurementGuideVideo: publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id, product.measurementsEnabled !== false) } : {}),
+      ...(/kandura/i.test(String(product.category || '')) && Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
     }));
     const storefrontSettings = publicStoreSettings(store.settings);
     return json({ products, settings: { ...storefrontSettings, deliveryRules: publicDeliveryRules(Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) } });
@@ -321,7 +324,7 @@ export async function PUT(request: Request) {
       const store = await readStore(); store.settings = body.settings; await saveStore(store); return json({ ok: true, settings: store.settings });
     }
     if (body.resource === 'products') {
-      if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && isValidMeasurementFields(p.measurements, p.id) && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean') && (p.measurementGuideVideo === undefined || isValidMeasurementGuideVideo(p.measurementGuideVideo, p.id)) && (p.measurementGuides === undefined || isValidMeasurementGuideList(p.measurementGuides, p.id)) && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000) && (p.images === undefined || Array.isArray(p.images) && p.images.every((image: any) => typeof image === 'string' && image.length <= 2000)))) return json({ error: 'Invalid product list.' }, 400);
+      if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.abayaCategory === undefined || typeof p.abayaCategory === 'string' && p.abayaCategory.length <= 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && isValidMeasurementFields(p.measurements, p.id) && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean') && (p.measurementGuideVideo === undefined || isValidMeasurementGuideVideo(p.measurementGuideVideo, p.id)) && (p.measurementGuides === undefined || isValidMeasurementGuideList(p.measurementGuides, p.id)) && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000) && (p.images === undefined || Array.isArray(p.images) && p.images.every((image: any) => typeof image === 'string' && image.length <= 2000)))) return json({ error: 'Invalid product list.' }, 400);
       if (new Set(body.products.map((p: any) => p.id)).size !== body.products.length) return json({ error: 'Product IDs must be unique.' }, 400);
       const store = await readStore(); store.products = body.products; await saveStore(store); return json({ ok: true, products: store.products });
     }
@@ -412,13 +415,22 @@ export async function PUT(request: Request) {
         const updates = body.updates;
         if (!updates || typeof updates !== 'object' || Array.isArray(updates)) return json({ error: 'Invalid order updates.' }, 400);
         if (updates.status !== undefined && !statuses.includes(updates.status)) return json({ error: 'Invalid order status.' }, 400);
+        if (updates.status !== undefined && isUntrackedDeliveryStatusTransition(order.status, updates.status)) return json({ error: 'Use the delivery confirmation or correction controls so the delivery timestamp and history are recorded.' }, 409);
         if (updates.customer !== undefined && !validText(updates.customer, 160)) return json({ error: 'Invalid customer name.' }, 400);
         if (order.orderType === CUSTOM_REFERENCE_ORDER_TYPE && updates.total !== undefined) return json({ error: 'Use the reviewed final-price confirmation field for this custom order.' }, 400);
         if (order.orderType !== CUSTOM_REFERENCE_ORDER_TYPE && (updates.finalPrice !== undefined || updates.finalPriceConfirmed !== undefined)) return json({ error: 'Final custom-order pricing is not available for this order.' }, 400);
         if (updates.total !== undefined && (!Number.isFinite(updates.total) || updates.total < 0)) return json({ error: 'Invalid order total.' }, 400);
         if (updates.delivery !== undefined) { const d = updates.delivery; if (!d || typeof d !== 'object' || !validEmail(d.email) || !validText(d.phone, 40) || !validText(d.address, 500) || !validText(d.city, 100) || !validText(d.postal, 20)) return json({ error: 'Invalid delivery details.' }, 400); }
-        if (updates.statusPayment !== undefined && (!paymentStatuses.includes(updates.statusPayment) || (order.statusPayment || 'Pending verification') !== 'Pending verification' || updates.statusPayment === 'Pending verification')) return json({ error: 'Payment status can only be changed from pending verification to a reviewed outcome.' }, 400);
+        if (['paymentAmount', 'paidAt', 'paymentDate'].some((field) => Object.prototype.hasOwnProperty.call(updates, field))) return json({ error: 'Payment amount and verification date are recorded by the server when payment is reviewed.' }, 400);
+        if (updates.statusPayment !== undefined && !canReviewPaymentStatus(order.statusPayment || 'Pending verification', updates.statusPayment)) return json({ error: 'Payment status can only be reviewed from pending, unpaid, or pending verification states.' }, 400);
         const next = { ...order, ...updates }; delete next.payment;
+        if (updates.statusPayment === 'Paid') {
+          const confirmedPayment = recordPaymentConfirmation(order, customerPaymentAmount(order), new Date().toISOString());
+          if (!confirmedPayment) return json({ error: 'The server could not determine a safe amount to record for this payment.' }, 409);
+          next.paymentAmount = confirmedPayment.paymentAmount;
+          next.paidAt = confirmedPayment.paidAt;
+          next.paymentDate = confirmedPayment.paymentDate;
+        }
         if (order.orderType === CUSTOM_REFERENCE_ORDER_TYPE) {
           const priceUpdate = updateCustomReferenceFinalPrice(next, {
             finalPrice: updates.finalPrice !== undefined ? updates.finalPrice : order.finalPrice,
@@ -437,6 +449,14 @@ export async function PUT(request: Request) {
         }
         await saveOrder(next); return json({ ok: true, order: safePayment(next) });
       }
+      if (body.action === 'setDeliveryStatus') {
+        if (typeof body.delivered !== 'boolean') return json({ error: 'Choose a valid delivery action.' }, 400);
+        if (order.status === 'Cancelled') return json({ error: 'Cancelled orders cannot be marked delivered or changed through delivery controls.' }, 409);
+        const updated = updateDeliveryStatus(order, body.delivered, 'authenticated-admin');
+        if (!updated.changed) return json({ ok: true, order: safePayment(order), unchanged: true });
+        await saveOrder(updated.order);
+        return json({ ok: true, order: safePayment(updated.order) });
+      }
       return json({ error: 'Invalid order action.' }, 400);
     }
     if (body.resource === 'customer') {
@@ -446,7 +466,7 @@ export async function PUT(request: Request) {
       if (!matching.length) return json({ error: 'Customer not found.' }, 404);
       if (body.action === 'delete') {
         if (!body.id.includes('@') || String(body.confirmation || '').toLowerCase() !== body.id.toLowerCase()) return json({ error: 'Type the customer email to confirm deletion.' }, 400);
-        const { blobs } = await list({ prefix: ORDER_PREFIX, limit: 1000 });
+        const blobs = await listAllBlobPages((options) => list(options), { prefix: ORDER_PREFIX, limit: 1000 });
         const urls = blobs.filter(b => matching.some((o: any) => o.id && b.pathname === `${ORDER_PREFIX}${o.id}.json`)).map(b => b.url);
         if (urls.length) await del(urls);
         return json({ ok: true });
@@ -503,7 +523,7 @@ export async function POST(request: Request) {
       product: order.product,
       ...(order.productId ? { productId: order.productId, productName: order.productName, productImage: order.productImage || '', basePrice: order.basePrice } : {}),
       date: order.date || new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
-      subtotal, deliveryFee, discount, total: finalTotal, status: order.status, tone: order.tone || 'sand',
+      subtotal, deliveryFee, discount, total: finalTotal, status: initialCustomerOrderStatus(order.status), tone: order.tone || 'sand',
       ...customReferenceFields,
       ...paymentFields,
       delivery: order.delivery, design: order.design,
@@ -521,9 +541,15 @@ export async function POST(request: Request) {
       return json({ error: 'This order reference is already in use. Please contact the atelier before retrying.' }, 409);
     }
     try {
-      await persistOrderThenNotify(clean, {
-        persist: () => put(pathname, JSON.stringify(clean), { access: 'private', addRandomSuffix: false, allowOverwrite: false, contentType: 'application/json' }),
-        notify: () => notifyNewOrder(clean.id),
+      await persistOrderThenNotifyAdminPush(clean, {
+        persist: async (savedOrder: any) => {
+          await put(pathname, JSON.stringify(savedOrder), { access: 'private', addRandomSuffix: false, allowOverwrite: false, contentType: 'application/json' });
+          return savedOrder;
+        },
+        notify: async (savedOrder: any) => {
+          // Keep WhatsApp independent from FCM; both run only after the order is durable.
+          await Promise.all([notifyNewOrder(savedOrder.id), notifyAdminDevicesOfOrder(savedOrder.id)]);
+        },
       });
     } catch (writeError) {
       // A concurrent request may have saved the same reference after our read.

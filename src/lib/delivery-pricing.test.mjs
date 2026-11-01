@@ -240,6 +240,28 @@ test('model-specific customization prices are counted once and Abaya validates o
   assert.deepEqual(result, { ok: true, basePrice: 4000, subtotal: 4000 });
 });
 
+test('Abaya accepts only enabled standard sizes and ignores stored measurement and extra steps', () => {
+  const sizes = ['S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'Custom Measurements'].map((name, index) => ({ id: `size-${index}`, name, priceAdjustment: 0 }));
+  const abaya = { id: 'abaya-standard-sizes', name: 'Everyday Abaya', price: 1200, category: 'Abaya', customizationSteps: [
+    { id: 'style', title: 'Abaya Style', required: true, options: [{ id: 'classic', name: 'Classic', priceAdjustment: 0 }] },
+    { id: 'size', title: 'Choose Size', required: true, options: sizes },
+    { id: 'measurements', title: 'Custom Measurements', required: true, options: [{ id: 'chest', name: 'Chest', priceAdjustment: 900 }] },
+    { id: 'fabric', title: 'Fabric', required: true, options: [{ id: 'nida', name: 'Nida', priceAdjustment: 800 }] },
+  ] };
+  for (const name of ['S', 'M', 'L', 'XL', 'XXL']) {
+    const option = sizes.find(item => item.name === name);
+    const result = calculateConfiguredSubtotal(abaya, { productType: 'Abaya', customization: [{ stepId: 'size', optionId: option.id, option: option.name, priceAdjustment: 0 }] });
+    assert.equal(result.ok, true, `${name} should be accepted`);
+    assert.equal(result.subtotal, 1200);
+  }
+  for (const name of ['XXXL', 'Custom Measurements']) {
+    const option = sizes.find(item => item.name === name);
+    const result = calculateConfiguredSubtotal(abaya, { productType: 'Abaya', customization: [{ stepId: 'size', optionId: option.id, option: option.name, priceAdjustment: 0 }] });
+    assert.equal(result.ok, false, `${name} must not be accepted for Abaya`);
+  }
+  assert.equal(calculateConfiguredSubtotal(abaya, { productType: 'Abaya', customization: [] }).ok, false, 'size remains required');
+});
+
 test('Abaya reference photo can substitute for a model selection but not the required size', () => {
   const abaya = { id: 'abaya', name: 'Abaya', price: 4000, category: 'Abaya', customizationSteps: [
     { id: 'model', title: 'Abaya Style', required: true, options: [{ id: 'classic', name: 'Classic', priceAdjustment: 0 }] },

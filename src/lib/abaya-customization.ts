@@ -1,18 +1,4 @@
-export type AbayaStepLike = {
-  id: string;
-  title: string;
-  options: unknown[];
-};
-
-/** Keep Abaya's saved choices intact while presenting only its model and size steps. */
-export function getAbayaCustomerSteps<Step extends AbayaStepLike>(steps: Step[]) {
-  const model = steps.find((step) => /model|abaya\s*style|style/i.test(step.title));
-  const size = steps.find((step) => /size|measurement/i.test(step.title));
-  return [
-    ...(model ? [{ ...model, title: 'Select Abaya Model' }] : []),
-    ...(size && size.id !== model?.id ? [{ ...size, title: 'Select Size' }] : []),
-  ];
-}
+export { ABAYA_STANDARD_SIZES, getAbayaCustomerSteps } from './abaya-size-options.mjs';
 
 export const MODEL_REFERENCE_PREFIX = 'arabian-tailors/order-reference-photos/';
 /** Backwards-compatible name for existing Abaya uploads and stored URLs. */

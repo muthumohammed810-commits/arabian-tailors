@@ -52,7 +52,7 @@ function initialShopProducts(): StoreProduct[] {
       options: step.options.map((option, optionIndex) => ({ ...option, id: `default-${product.id}-step-${stepIndex + 1}-option-${optionIndex + 1}` })),
     }));
     const measurements = defaultMeasurements[garment].map((field, index) => ({ ...field, id: `default-${product.id}-measurement-${index + 1}` }));
-    return { ...product, available: true, options: [], customizationSteps, measurements, measurementsEnabled: true };
+    return { ...product, available: true, options: [], customizationSteps, measurements, measurementsEnabled: garment === 'kandura' };
   });
 }
 
