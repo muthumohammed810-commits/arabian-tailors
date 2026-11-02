@@ -12,15 +12,16 @@ test('Abaya customer customization exposes optional model and only standard clot
     { id: 'measurements', title: 'Custom Measurements', options: [{ id: 'chest', name: 'Chest' }] },
   ];
   const visible = getAbayaCustomerSteps(steps);
-  assert.deepEqual(visible.map((step) => [step.id, step.title]), [['abaya-style', 'Select Abaya Model'], ['color', 'Select Colour'], ['abaya-size', 'Select Size']]);
+  assert.deepEqual(visible.map((step) => [step.id, step.title]), [['abaya-style', 'Select Abaya Model'], ['color', 'Select Colour'], ['embroidery', 'Embroidery'], ['abaya-size', 'Select Size']]);
   assert.equal(visible[0].required, false);
   assert.equal(visible[0].options[0].name, 'Classic');
   assert.equal(visible[1].options[0].name, 'X');
-  assert.deepEqual(visible[2].options.map((option) => option.name), ['S', 'M', 'L', 'XL', 'XXL']);
+  assert.equal(visible[2].options[0].name, 'X');
+  assert.deepEqual(visible[3].options.map((option) => option.name), ['S', 'M', 'L', 'XL', 'XXL']);
   assert.deepEqual(getAbayaCustomerSteps([
     { id: 'front-style', title: 'Front Style', options: [{ id: 'open', name: 'Open Front' }] },
     { id: 'size-only', title: 'Size', options: [{ id: 's', name: 'S' }] },
-  ]).map((step) => step.id), ['size-only']);
+  ]).map((step) => step.id), ['front-style', 'size-only']);
 });
 
 test('Abaya defaults contain only optional style and required standard size steps, without measurement fields', () => {
@@ -38,14 +39,25 @@ test('public Abaya projection hides measurement and unrelated customization fiel
     { id: 'color', title: 'Choose Abaya Colour', options: [{ id: 'black', name: 'Black' }] },
     { id: 'size', title: 'Size', options: [{ id: 'm', name: 'M' }] },
   ] };
+  product.customizationSteps.push(
+    { id: 'stitching', title: 'Stitching Style', options: [{ id: 'classic', name: 'Classic' }, { id: 'hidden', name: 'Hidden', visible: false }] },
+    { id: 'hidden-step', title: 'Custom Options', available: false, options: [{ id: 'secret', name: 'Secret' }] },
+    { id: 'hidden-color', title: 'Color', options: [{ id: 'hidden-black', name: 'Black', visible: false }] },
+    { id: 'hidden-style-option', title: 'Stitching Style', options: [{ id: 'hidden-style', name: 'Hidden style', visible: false }] },
+    { id: 'visible-custom', title: 'Embroidery Options', options: [{ id: 'visible-embroidery', name: 'Embroidery', available: false, visible: true }] },
+  );
   const projected = publicAbayaProductProjection(product);
-  assert.deepEqual(projected.customizationSteps.map(step => step.id), ['model', 'color', 'size']);
+  assert.deepEqual(projected.customizationSteps.map(step => step.id), ['model', 'color', 'size', 'stitching', 'visible-custom']);
+  assert.deepEqual(projected.customizationSteps.find(step => step.id === 'stitching').options.map(option => option.id), ['classic']);
+  assert.deepEqual(projected.customizationSteps.find(step => step.id === 'visible-custom').options.map(option => option.id), ['visible-embroidery'], 'visible but unavailable entries remain present so the storefront can display them disabled');
+  assert.equal(projected.customizationSteps.some(step => step.id === 'hidden-color' || step.id === 'hidden-style-option'), false);
   assert.equal('measurements' in projected, false);
   assert.equal('measurementsEnabled' in projected, false);
   assert.equal('measurementGuides' in projected, false);
   assert.equal('measurementGuideVideo' in projected, false);
   assert.equal(product.measurements[0].name, 'Chest');
   assert.equal(product.customizationSteps.some(step => step.id === 'fabric'), true);
+  assert.equal(product.customizationSteps.some(step => step.id === 'hidden-step'), true);
 });
 
 test('Abaya store migration appends missing standard sizes without deleting legacy data or adding measurements', () => {

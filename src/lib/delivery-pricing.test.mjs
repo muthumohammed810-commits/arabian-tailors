@@ -238,6 +238,21 @@ test('server pricing uses saved model base and configured option prices', () => 
   assert.deepEqual(result, { ok: true, basePrice: 2300, subtotal: 2450 });
 });
 
+test('server accepts visible Abaya stitching/custom options and rejects hidden model or option choices', () => {
+  const product = { id: 'abaya-options', name: 'Abaya', category: 'Abaya', price: 1000, customizationSteps: [
+    { id: 'model', title: 'Choose Abaya Model', required: false, options: [{ id: 'classic', name: 'Classic', visible: true }] },
+    { id: 'size', title: 'Size', required: true, options: [{ id: 'm', name: 'M' }] },
+    { id: 'stitch', title: 'Stitching Style', required: false, options: [{ id: 'plain', name: 'Plain', priceAdjustment: 100, visible: true }, { id: 'hidden', name: 'Hidden', visible: false }] },
+  ] };
+  const choices = [
+    { stepId: 'size', optionId: 'm', option: 'M', priceAdjustment: 0 },
+    { stepId: 'stitch', optionId: 'plain', option: 'Plain', priceAdjustment: 100 },
+  ];
+  assert.deepEqual(calculateConfiguredSubtotal(product, { customization: choices }), { ok: true, basePrice: 1000, subtotal: 1100 });
+  assert.equal(calculateConfiguredSubtotal(product, { customization: [...choices, { stepId: 'stitch', optionId: 'hidden', option: 'Hidden', priceAdjustment: 0 }] }).ok, false);
+  assert.equal(calculateConfiguredSubtotal({ ...product, customizationSteps: product.customizationSteps.map(step => step.id === 'model' ? { ...step, options: step.options.map(option => ({ ...option, visible: false })) } : step) }, { selectedModel: { id: 'classic' }, customization: choices }).ok, false);
+});
+
 test('server rejects client-tampered option charges and missing required choices', () => {
   const product = { id: 'abaya', name: 'Abaya', price: 4000, customizationSteps: [
     { id: 'model', title: 'Abaya Model', required: true, options: [{ id: 'classic', name: 'Classic', priceAdjustment: 0 }] },
@@ -264,7 +279,7 @@ test('a required Kandura model can be skipped while other required choices remai
   assert.deepEqual(calculateConfiguredSubtotal(abaya, { productType: 'Abaya', customization: [{ stepId: 'abaya-size', optionId: 'm', option: 'M' }] }), { ok: true, subtotal: 350, basePrice: 350 });
 });
 
-test('model-specific customization prices are counted once and Abaya validates only model and size', () => {
+test('model-specific customization prices are counted once and visible Abaya custom options are server-validated', () => {
   const kandura = { id: 'kandura', name: 'Kandura', price: 2000, category: 'Kandura', customizationSteps: [
     { id: 'model', title: 'Choose Your Kandura Model', required: true, options: [{ id: 'saudi', name: 'Saudi', priceAdjustment: 0, modelCustomization: { colors: { required: true, visible: true, options: [{ id: 'ivory', name: 'Ivory', priceAdjustment: 25 }] } } }] },
   ] };
@@ -278,11 +293,13 @@ test('model-specific customization prices are counted once and Abaya validates o
     { id: 'size', title: 'Size', required: true, options: [{ id: 'm', name: 'M', priceAdjustment: 0 }] },
     { id: 'abaya-extra', title: 'Embroidery', required: true, options: [{ id: 'none', name: 'None', priceAdjustment: 500 }] },
   ] };
-  const result = calculateConfiguredSubtotal(abaya, { productType: 'Abaya', selectedModel: { id: 'classic' }, customization: [
+  const selections = [
     { stepId: 'model', optionId: 'classic', option: 'Classic', priceAdjustment: 0 },
     { stepId: 'size', optionId: 'm', option: 'M', priceAdjustment: 0 },
-  ] });
-  assert.deepEqual(result, { ok: true, basePrice: 4000, subtotal: 4000 });
+  ];
+  assert.equal(calculateConfiguredSubtotal(abaya, { productType: 'Abaya', selectedModel: { id: 'classic' }, customization: selections }).ok, false, 'required visible custom options remain required');
+  const result = calculateConfiguredSubtotal(abaya, { productType: 'Abaya', selectedModel: { id: 'classic' }, customization: [...selections, { stepId: 'abaya-extra', optionId: 'none', option: 'None', priceAdjustment: 500 }] });
+  assert.deepEqual(result, { ok: true, basePrice: 4000, subtotal: 4500 });
 });
 
 test('Abaya accepts only enabled standard sizes and ignores stored measurement and extra steps', () => {
@@ -316,4 +333,13 @@ test('Abaya reference photo can substitute for a model selection but not the req
     { stepId: 'size', optionId: 'm', option: 'M', priceAdjustment: 0 },
   ] }).ok, true);
   assert.equal(calculateConfiguredSubtotal(abaya, { productType: 'Abaya', customerReferencePhoto: { url: 'some-url' }, customization: [] }).ok, false);
+});
+
+test('server rejects Abaya size and custom options whose configured stock is below the requested quantity', () => {
+  const product = { id: 'abaya-option-stock', name: 'Abaya', category: 'Abaya', price: 1000, customizationSteps: [
+    { id: 'size', title: 'Size', required: true, options: [{ id: 'm', name: 'M', stock: 1 }] },
+    { id: 'buttons', title: 'Button Options', required: false, options: [{ id: 'pearl', name: 'Pearl buttons', stock: 0 }] },
+  ] };
+  assert.equal(calculateConfiguredSubtotal(product, { quantity: 2, customization: [{ stepId: 'size', optionId: 'm', option: 'M', priceAdjustment: 0 }] }).ok, false);
+  assert.equal(calculateConfiguredSubtotal(product, { quantity: 1, customization: [{ stepId: 'size', optionId: 'm', option: 'M', priceAdjustment: 0 }, { stepId: 'buttons', optionId: 'pearl', option: 'Pearl buttons', priceAdjustment: 0 }] }).ok, false);
 });

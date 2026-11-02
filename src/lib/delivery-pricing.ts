@@ -110,7 +110,7 @@ export function quoteFlatDelivery(
 }
 
 type PriceOption = { id: string; name: string; priceAdjustment?: number; basePrice?: number; stock?: number; available?: boolean; visible?: boolean };
-type PriceStep = { id: string; title: string; required?: boolean; available?: boolean; options: PriceOption[] };
+type PriceStep = { id: string; title: string; required?: boolean; available?: boolean; visible?: boolean; options: PriceOption[] };
 type PriceProduct = { id: string; name: string; price: number; salePrice?: number | null; stock?: number; category?: string; customizationSteps?: PriceStep[] };
 
 /** Calculate the merchandise subtotal from the current stored product configuration. */
@@ -128,7 +128,7 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
   const modelStep = steps.find(step => isAbaya ? /model/i.test(step.title) || /^abaya\s*style$/i.test(step.title.trim()) : /model/i.test(step.title));
   const model = selectedModelId ? modelStep?.options.find(option => option.id === selectedModelId) : undefined;
   // A named model is optional; customers can describe the garment with a private reference photo or proceed without one.
-  if (selectedModelId && !model) return { ok: false, error: 'The selected model is no longer available. Refresh your choices.' };
+  if (selectedModelId && (!model || modelStep?.available === false || modelStep?.visible === false || model.available === false || model.visible === false)) return { ok: false, error: 'The selected model is no longer available. Refresh your choices.' };
   const basePrice = isAbaya ? effectiveAbayaPrice(product) : model?.basePrice ?? product.price;
   if (!Number.isFinite(basePrice) || basePrice < 0) return { ok: false, error: 'The configured base price is invalid.' };
   let optionAdjustments = 0;
@@ -153,7 +153,7 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
       continue;
     }
     const option = effectiveStep.options.find((candidate: PriceOption) => candidate.id === submitted.optionId);
-    if (!option || option.available === false || option.visible === false || (isAbaya && /colou?r/i.test(effectiveStep.title) && option.stock !== undefined && option.stock < quantity)) return { ok: false, error: `The selected ${effectiveStep.title} option does not have enough stock. Refresh your choices.` };
+    if (!option || option.available === false || option.visible === false || (isAbaya && option.stock !== undefined && option.stock < quantity)) return { ok: false, error: `The selected ${effectiveStep.title} option does not have enough stock. Refresh your choices.` };
     if (submitted.option !== option.name || Number(submitted.priceAdjustment || 0) !== Number(option.priceAdjustment || 0)) return { ok: false, error: `The saved price for ${effectiveStep.title} changed. Refresh your choices.` };
     verifiedSelections.add(selectionKey(step.id, option.id));
     optionAdjustments += Number(option.priceAdjustment || 0);
