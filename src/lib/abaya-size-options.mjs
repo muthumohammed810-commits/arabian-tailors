@@ -2,6 +2,19 @@ export const ABAYA_STANDARD_SIZES = Object.freeze(['S', 'M', 'L', 'XL', 'XXL']);
 
 const isAbaya = (product) => String(product?.category || '').trim().toLowerCase() === 'abaya';
 
+/** Assign each saved Abaya customization step to one Admin section only. */
+export function getAbayaManagementStepKind(title) {
+  const normalized = String(title || '').trim();
+  if (/model/i.test(normalized) || /^abaya\s*style$/i.test(normalized)) return 'models';
+  if (/colou?r/i.test(normalized)) return 'colors';
+  if (/size/i.test(normalized)) return 'sizes';
+  if (/fabric|cloth/i.test(normalized)) return 'fabrics';
+  if (/measurement/i.test(normalized)) return 'measurements';
+  if (/stitch|style/i.test(normalized)) return 'stitching';
+  if (/custom|embroid|button|priority|extra|personal|collar|cuff|pocket|option/i.test(normalized)) return 'customization';
+  return 'other';
+}
+
 /** Bulk product visibility is scoped to Abayas and leaves every other category untouched. */
 export function setAbayaProductsVisibility(products, visible) {
   return products.map((product) => isAbaya(product) ? { ...product, available: visible } : product);

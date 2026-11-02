@@ -1,6 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getAbayaCustomerSteps, reorderAbayaProducts, setAbayaProductsVisibility, setAbayaStepOptionsVisibility } from './abaya-size-options.mjs';
+import { getAbayaCustomerSteps, getAbayaManagementStepKind, reorderAbayaProducts, setAbayaProductsVisibility, setAbayaStepOptionsVisibility } from './abaya-size-options.mjs';
+
+test('each Abaya customization step has one Admin section, including miscellaneous options', () => {
+  const cases = [
+    ['Select Abaya Model', 'models'],
+    ['Choose Abaya Colour', 'colors'],
+    ['Select Size', 'sizes'],
+    ['Fabric', 'fabrics'],
+    ['Custom measurements', 'measurements'],
+    ['Stitching / Style', 'stitching'],
+    ['Embroidery', 'customization'],
+    ['Buttons', 'customization'],
+    ['Lining', 'other'],
+  ];
+  for (const [title, expected] of cases) assert.equal(getAbayaManagementStepKind(title), expected, title);
+});
 
 test('bulk model visibility changes Abaya products only and preserves non-Abaya records', () => {
   const products = [
