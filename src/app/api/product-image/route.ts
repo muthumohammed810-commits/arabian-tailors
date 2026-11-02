@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isPublicProductImagePath } from '@/lib/product-image-url';
 import { hasPublishedMeasurementGuideImage, hasPublishedMeasurementGuideVideo, isMeasurementGuideImagePath, isMeasurementGuideVideoPath } from '@/lib/measurement-guides.mjs';
 import { isAdminAuthenticated } from '@/app/admin/guard';
+import { ABAYA_PRODUCT_IMAGE_PREFIX, getProductImageBlobStore, isAbayaProductImagePath, isAbayaProductImageUrlForStore } from '@/lib/abaya-product.mjs';
 
 async function isPublishedGuideImage(pathname: string) {
   const stored = await get('arabian-tailors/store.json', { access: 'private', useCache: false });
@@ -24,9 +25,11 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   const pathname = request.nextUrl.searchParams.get('pathname') || '';
   const productImage = isPublicProductImagePath(pathname);
+  const abayaNamespace = pathname.startsWith(ABAYA_PRODUCT_IMAGE_PREFIX);
+  const abayaImage = isAbayaProductImagePath(pathname);
   const guideImage = isMeasurementGuideImagePath(pathname);
   const guideVideo = isMeasurementGuideVideoPath(pathname);
-  if (pathname.length > 300 || (!productImage && !guideImage && !guideVideo)) {
+  if (pathname.length > 300 || (!productImage && !guideImage && !guideVideo) || (abayaNamespace && !abayaImage)) {
     return new NextResponse('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
   }
 
@@ -41,9 +44,19 @@ export async function GET(request: NextRequest) {
         return new NextResponse('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
       }
     }
-    const result = await get(pathname, { access: 'private' });
+    const storage = getProductImageBlobStore(pathname);
+    if (storage.kind === 'abaya' && !storage.token) {
+      return new NextResponse('Abaya image storage is not configured', { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
+    if (storage.kind === 'shared' && !storage.token) {
+      return new NextResponse('Image storage is not configured', { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
+    const result = await get(pathname, { access: 'private', token: storage.token || undefined });
+    if (storage.kind === 'abaya' && !isAbayaProductImageUrlForStore(result?.blob.url, process.env.ABAYA_BLOB_STORE_ID)) {
+      return new NextResponse('Image not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+    }
     const blobPathAllowed = productImage
-      ? result?.blob.pathname.startsWith('arabian-tailors/product-images/')
+      ? isPublicProductImagePath(result?.blob.pathname || '')
       : result?.blob.pathname === pathname;
     if (result?.statusCode !== 200 || !result.stream || !blobPathAllowed) {
       return new NextResponse('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });

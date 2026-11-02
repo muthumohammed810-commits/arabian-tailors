@@ -17,6 +17,9 @@ import { canReviewPaymentStatus, initialCustomerOrderStatus, isUntrackedDelivery
 import { normalizePaymentStatus, paymentAuditFields, recordPaymentConfirmation } from '@/lib/order-admin.mjs';
 import { listAllBlobPages } from '@/lib/blob-pagination.mjs';
 import { publicStoreSettings } from '@/lib/public-store-settings.mjs';
+import { abayaProductImagePathFromUrl, isAbayaProductImageUrlForStore, isValidAbayaProductCode, isValidAbayaSalePrice, normalizeAbayaProductCode } from '@/lib/abaya-product.mjs';
+import { isPublicProductImagePath } from '@/lib/product-image-url';
+import { publicAbayaProductProjection } from '@/lib/abaya-size-options.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -255,6 +258,10 @@ function isVercelBlobUrl(value: unknown): value is string {
     return url.protocol === 'https:' && (url.hostname === 'blob.vercel-storage.com' || url.hostname.endsWith('.blob.vercel-storage.com'));
   } catch { return false; }
 }
+function isProductImageBlobUrl(value: unknown): value is string {
+  if (!isVercelBlobUrl(value)) return false;
+  try { return isPublicProductImagePath(decodeURIComponent(new URL(value).pathname.slice(1))); } catch { return false; }
+}
 function logAdminWriteFailure(resource: unknown, error: unknown) {
   const details = error && typeof error === 'object' ? error as { name?: unknown; code?: unknown; status?: unknown; statusCode?: unknown } : {};
   const safe = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(value) ? value : undefined;
@@ -286,7 +293,7 @@ export async function GET() {
       return json({ ...store, orders, customers, orderSummary: summarizeOrders(orders) });
     }
     const products = store.products.filter(p => p.available !== false).map((product: any) => ({
-      ...product,
+      ...publicAbayaProductProjection(product),
       ...(/kandura/i.test(String(product.category || '')) && Array.isArray(product.measurements) ? { measurements: publishedMeasurementFields(product.measurements, product.id, product.measurementsEnabled !== false) } : {}),
       ...(/kandura/i.test(String(product.category || '')) && product.measurementGuideVideo ? { measurementGuideVideo: publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id, product.measurementsEnabled !== false) } : {}),
       ...(/kandura/i.test(String(product.category || '')) && Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
@@ -324,9 +331,22 @@ export async function PUT(request: Request) {
       const store = await readStore(); store.settings = body.settings; await saveStore(store); return json({ ok: true, settings: store.settings });
     }
     if (body.resource === 'products') {
-      if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.abayaCategory === undefined || typeof p.abayaCategory === 'string' && p.abayaCategory.length <= 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && isValidMeasurementFields(p.measurements, p.id) && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean') && (p.measurementGuideVideo === undefined || isValidMeasurementGuideVideo(p.measurementGuideVideo, p.id)) && (p.measurementGuides === undefined || isValidMeasurementGuideList(p.measurementGuides, p.id)) && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000) && (p.images === undefined || Array.isArray(p.images) && p.images.every((image: any) => typeof image === 'string' && image.length <= 2000)))) return json({ error: 'Invalid product list.' }, 400);
+      if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.productCode === undefined || typeof p.productCode === 'string' && p.productCode.length <= 32) && (p.salePrice === undefined || p.salePrice === null || Number.isFinite(p.salePrice) && p.salePrice >= 0) && (p.abayaCategory === undefined || typeof p.abayaCategory === 'string' && p.abayaCategory.length <= 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && isValidMeasurementFields(p.measurements, p.id) && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean') && (p.measurementGuideVideo === undefined || isValidMeasurementGuideVideo(p.measurementGuideVideo, p.id)) && (p.measurementGuides === undefined || isValidMeasurementGuideList(p.measurementGuides, p.id)) && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000) && (p.images === undefined || Array.isArray(p.images) && p.images.every((image: any) => typeof image === 'string' && image.length <= 2000)))) return json({ error: 'Invalid product list.' }, 400);
       if (new Set(body.products.map((p: any) => p.id)).size !== body.products.length) return json({ error: 'Product IDs must be unique.' }, 400);
-      const store = await readStore(); store.products = body.products; await saveStore(store); return json({ ok: true, products: store.products });
+      const store = await readStore();
+      const priorProducts = new Map(store.products.map((product: any) => [product.id, product]));
+      const abayaProducts = body.products.filter((product: any) => String(product.category).trim().toLowerCase() === 'abaya');
+      const productCodes = abayaProducts.map((product: any) => normalizeAbayaProductCode(product.productCode)).filter(Boolean);
+      if (new Set(productCodes).size !== productCodes.length) return json({ error: 'Abaya product codes must be unique.' }, 400);
+      for (const product of abayaProducts) {
+        const previous = priorProducts.get(product.id) as any;
+        const hasCode = typeof product.productCode === 'string' && product.productCode.trim().length > 0;
+        if (!hasCode && !previous) return json({ error: 'New Abaya products require a unique product code.' }, 400);
+        if (hasCode && !isValidAbayaProductCode(product.productCode)) return json({ error: 'Abaya product codes must use 2–32 letters, numbers, hyphens or underscores.' }, 400);
+        if (product.salePrice !== undefined && product.salePrice !== null && (!isValidAbayaSalePrice(product) || product.salePrice > product.price)) return json({ error: 'Abaya sale price must be non-negative and no greater than its regular price.' }, 400);
+        if (!hasCode && previous?.productCode) return json({ error: 'An existing Abaya product code cannot be removed.' }, 400);
+      }
+      store.products = body.products; await saveStore(store); return json({ ok: true, products: store.products });
     }
     if (body.resource === 'measurementGuides') {
       if (body.action !== 'save' || !validText(body.productId, 100) || !isValidMeasurementGuideList(body.guides, body.productId)) return json({ error: 'Invalid Kandura measurement guide configuration.' }, 400);
@@ -354,11 +374,16 @@ export async function PUT(request: Request) {
       return json({ ok: true, productId: product.id, measurements: product.measurements || [], measurementGuideVideo: product.measurementGuideVideo || null });
     }
     if (body.resource === 'productPhotos' || body.resource === 'optionPhotos') {
-      if (!validText(body.productId, 100) || !isVercelBlobUrl(body.url) || !['add', 'replace'].includes(body.action)) return json({ error: 'Invalid image update.' }, 400);
+      if (!validText(body.productId, 100) || !isProductImageBlobUrl(body.url) || !['add', 'replace'].includes(body.action)) return json({ error: 'Invalid image update.' }, 400);
       if (body.action === 'replace' && (!Number.isInteger(body.index) || body.index < 0)) return json({ error: 'Invalid photo position.' }, 400);
       const store = await readStore();
       const product = store.products.find((item: any) => item.id === body.productId);
       if (!product) return json({ error: 'Product not found. Save the product before uploading photos.' }, 404);
+      const isAbaya = String(product.category || '').trim().toLowerCase() === 'abaya';
+      if (isAbaya && !isAbayaProductImageUrlForStore(body.url, process.env.ABAYA_BLOB_STORE_ID)) {
+        return json({ error: process.env.ABAYA_BLOB_STORE_ID ? 'Abaya photos must come from the configured private Abaya image store.' : 'Abaya image storage is not configured.' }, process.env.ABAYA_BLOB_STORE_ID ? 400 : 503);
+      }
+      if (!isAbaya && abayaProductImagePathFromUrl(body.url)) return json({ error: 'Abaya images cannot be added to another product gallery.' }, 400);
       let target: any;
       if (body.resource === 'productPhotos') {
         target = product;
@@ -522,6 +547,7 @@ export async function POST(request: Request) {
       initials: order.initials || order.customer.split(/\s+/).map((part: string) => part[0]).join('').slice(0, 2).toUpperCase(),
       product: order.product,
       ...(order.productId ? { productId: order.productId, productName: order.productName, productImage: order.productImage || '', basePrice: order.basePrice } : {}),
+      ...(String(product.category || '').trim().toLowerCase() === 'abaya' ? { quantity: order.design?.quantity ?? 1 } : {}),
       date: order.date || new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
       subtotal, deliveryFee, discount, total: finalTotal, status: initialCustomerOrderStatus(order.status), tone: order.tone || 'sand',
       ...customReferenceFields,

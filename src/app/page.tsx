@@ -6,16 +6,17 @@ import { ArrowLeft, ArrowRight, ArrowUpRight, Menu, X, ChevronLeft, ChevronRight
 import { products as catalogProducts, styles as tailoringStyles, type Product } from '@/lib/catalog';
 import { GarmentVisual } from '@/components/garment-visual';
 import { productImageSource } from '@/lib/product-image-url';
+import { effectiveAbayaPrice, isCustomerProductAvailable } from '@/lib/abaya-product.mjs';
 
-type StoreProduct = Product & { images?: string[]; available?: boolean; stock?: number; stitchingType?: string; customizationSteps?: { id: string; title: string; description?: string; required?: boolean; available?: boolean; options: { id: string; name: string; description?: string; image?: string; priceAdjustment?: number; available?: boolean }[] }[] };
+type StoreProduct = Product & { images?: string[]; available?: boolean; stock?: number; salePrice?: number | null; productCode?: string; stitchingType?: string; customizationSteps?: { id: string; title: string; description?: string; required?: boolean; available?: boolean; options: { id: string; name: string; description?: string; image?: string; priceAdjustment?: number; available?: boolean }[] }[] };
 type Category = 'All' | 'Abaya' | 'Kandura' | 'Fabrics' | 'Stitching' | 'Custom Design';
-type Card = { id: string; name: string; category: string; price: number; image: string; images?: string[]; description: string; tag?: string; href: string; rating?: number; reviews?: number; garmentKind?: 'abaya' | 'kandura' };
+type Card = { id: string; name: string; category: string; price: number; regularPrice?: number; image: string; images?: string[]; description: string; tag?: string; href: string; rating?: number; reviews?: number; garmentKind?: 'abaya' | 'kandura' };
 
 const categories: Category[] = ['All', 'Abaya', 'Kandura', 'Fabrics', 'Stitching', 'Custom Design'];
 function toCard(product: StoreProduct): Card {
   const category = product.category.toLowerCase();
   return {
-    id: product.id, name: product.name, category: product.category, price: product.price,
+    id: product.id, name: product.name, category: product.category, price: category === 'abaya' ? effectiveAbayaPrice(product) : product.price, regularPrice: category === 'abaya' && Number.isFinite(product.salePrice) ? product.price : product.oldPrice,
     image: product.images?.[0] || product.image, images: product.images?.length ? product.images : [product.image], description: product.description, tag: product.tag,
     href: category === 'kandura' || category === 'abaya' || product.customizationSteps?.length ? `/customize?product=${encodeURIComponent(product.id)}` : '#collection',
     garmentKind: category === 'abaya' ? 'abaya' : category === 'kandura' ? 'kandura' : undefined,
@@ -51,7 +52,7 @@ export default function Home() {
   }, []);
 
   const cards = useMemo<Card[]>(() => {
-    const inStock = (product: StoreProduct) => product.available !== false;
+    const inStock = (product: StoreProduct) => isCustomerProductAvailable(product);
     if (category === 'Abaya') return products.filter((product) => inStock(product) && product.category.toLowerCase() === 'abaya').map(toCard);
     if (category === 'Kandura') return products.filter((product) => inStock(product) && product.category.toLowerCase() === 'kandura').map(toCard);
     if (category === 'Fabrics') return products.filter((product) => inStock(product) && product.category.toLowerCase() === 'fabric').map(toCard);
@@ -67,7 +68,7 @@ export default function Home() {
       }));
     }
     if (category === 'Custom Design') return [];
-    return products.map(toCard);
+    return products.filter(inStock).map(toCard);
   }, [category, products]);
   const featuredAbaya = products.find((product) => product.available !== false && product.category.toLowerCase() === 'abaya') || catalogProducts.find((product) => product.category.toLowerCase() === 'abaya');
   const abayaHref = featuredAbaya ? `/customize?product=${encodeURIComponent(featuredAbaya.id)}` : '/customize';
@@ -157,7 +158,7 @@ export default function Home() {
               <div className="product-rail" ref={railRef} onScroll={updateActiveSlide}>
                 {cards.map((card) => <article className={`product-card editorial-card ${expandedCard === card.id ? 'expanded' : ''}`} key={card.id}>
                   <Link href={card.href} className="product-visual" aria-label={`View ${card.name}`}>
-                    {card.garmentKind ? <GarmentVisual kind={card.garmentKind} className="product-garment-visual" /> : card.category.toLowerCase() === 'fabric' ? <div className="product-img fabric-visual" aria-hidden="true" /> : <div className="product-img" style={{ backgroundImage: `url('${productImageSource(card.image)}')` }} />}
+                    {card.category.toLowerCase()==='abaya' ? (card.image?<div className="product-img abaya-product-photo" style={{backgroundImage:`url('${productImageSource(card.image)}')`}} />:<GarmentVisual kind="abaya" className="product-garment-visual" />) : card.garmentKind ? <GarmentVisual kind={card.garmentKind} className="product-garment-visual" /> : card.category.toLowerCase() === 'fabric' ? <div className="product-img fabric-visual" aria-hidden="true" /> : <div className="product-img" style={{ backgroundImage: `url('${productImageSource(card.image)}')` }} />}
                     {card.tag && <span className="tag">{card.tag}</span>}
                     {products.find((product) => product.id === card.id)?.available === false && <span className="availability-tag">Unavailable</span>}
                     <span className="product-visual-mark"><ArrowUpRight size={16}/></span>
@@ -165,7 +166,7 @@ export default function Home() {
                   <div className="product-info">
                     <div className="product-meta"><span>{card.category}</span>{card.rating && <span><Star size={11} fill="var(--gold)"/> {card.rating} <i>({card.reviews})</i></span>}</div>
                     <Link href={card.href}><h3>{card.name}</h3></Link>
-                    <div className="product-price-row"><span className="price">₹{card.price.toLocaleString('en-IN')}</span><span className="made-note">{products.find((product) => product.id === card.id)?.available === false ? 'CURRENTLY UNAVAILABLE' : 'MADE TO ORDER'}</span></div>
+                    <div className="product-price-row"><span className="price">₹{card.price.toLocaleString('en-IN')}{card.regularPrice!==undefined&&card.regularPrice>card.price&&<> <s className="abaya-regular-price">₹{card.regularPrice.toLocaleString('en-IN')}</s></>}</span><span className="made-note">{products.find((product) => product.id === card.id)?.available === false ? 'CURRENTLY UNAVAILABLE' : 'MADE TO ORDER'}</span></div>
                     <button className="card-expand" aria-expanded={expandedCard === card.id} onClick={() => setExpandedCard(expandedCard === card.id ? null : card.id)}>{expandedCard === card.id ? 'Less detail' : 'Discover details'}{expandedCard === card.id ? <Minus size={13}/> : <Plus size={13}/>}</button>
                     {expandedCard === card.id && <div className="card-detail"><p>{card.description}</p><Link href={card.href}>Explore this piece <ArrowRight size={13}/></Link></div>}
                   </div>

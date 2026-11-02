@@ -1,4 +1,5 @@
 import { isOfficialIndiaPostPinSource } from './delivery-rule-csv.mjs';
+import { effectiveAbayaPrice } from './abaya-product.mjs';
 import { getAbayaCustomerSteps } from './abaya-size-options.mjs';
 
 /** Fixed shop dispatch location shown in Admin; this is not a courier quote. */
@@ -108,15 +109,19 @@ export function quoteFlatDelivery(
   return { status: 'available', ...directoryInfo, ...(coverage?.area && !directoryInfo.area ? { area: coverage.area } : {}), fee: roundedFee, message: roundedFee === 0 ? 'Delivery Fee: FREE' : `Delivery Fee: ₹${roundedFee.toLocaleString('en-IN')}` };
 }
 
-type PriceOption = { id: string; name: string; priceAdjustment?: number; basePrice?: number; available?: boolean; visible?: boolean };
+type PriceOption = { id: string; name: string; priceAdjustment?: number; basePrice?: number; stock?: number; available?: boolean; visible?: boolean };
 type PriceStep = { id: string; title: string; required?: boolean; available?: boolean; options: PriceOption[] };
-type PriceProduct = { id: string; name: string; price: number; category?: string; customizationSteps?: PriceStep[] };
+type PriceProduct = { id: string; name: string; price: number; salePrice?: number | null; stock?: number; category?: string; customizationSteps?: PriceStep[] };
 
 /** Calculate the merchandise subtotal from the current stored product configuration. */
 export function calculateConfiguredSubtotal(product: PriceProduct, design: any, fabricProducts: PriceProduct[] = []): { ok: true; subtotal: number; basePrice: number } | { ok: false; error: string } {
   if (!product || !Number.isFinite(product.price) || product.price < 0) return { ok: false, error: 'The configured product price is unavailable.' };
   const steps = Array.isArray(product.customizationSteps) ? product.customizationSteps : [];
-  const isAbaya = String(design?.productType || product.category || '').toLowerCase() === 'abaya';
+  // Product category comes from private store data; never let a browser-submitted design type disable Abaya validation.
+  const isAbaya = String(product.category || '').trim().toLowerCase() === 'abaya';
+  const quantity = isAbaya ? (design?.quantity ?? 1) : 1;
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) return { ok: false, error: 'Choose a quantity between 1 and 20.' };
+  if (isAbaya && Number.isInteger(product.stock) && product.stock! > 0 && quantity > product.stock!) return { ok: false, error: 'The requested quantity exceeds the available product stock.' };
   const activeSteps = isAbaya ? getAbayaCustomerSteps(steps) : steps;
   const selections = Array.isArray(design?.customization) ? design.customization : [];
   const selectedModelId = typeof design?.selectedModel?.id === 'string' ? design.selectedModel.id : '';
@@ -124,7 +129,7 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
   const model = selectedModelId ? modelStep?.options.find(option => option.id === selectedModelId) : undefined;
   // A named model is optional; customers can describe the garment with a private reference photo or proceed without one.
   if (selectedModelId && !model) return { ok: false, error: 'The selected model is no longer available. Refresh your choices.' };
-  const basePrice = model?.basePrice ?? product.price;
+  const basePrice = isAbaya ? effectiveAbayaPrice(product) : model?.basePrice ?? product.price;
   if (!Number.isFinite(basePrice) || basePrice < 0) return { ok: false, error: 'The configured base price is invalid.' };
   let optionAdjustments = 0;
   const verifiedSelections = new Set<string>();
@@ -148,7 +153,7 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
       continue;
     }
     const option = effectiveStep.options.find((candidate: PriceOption) => candidate.id === submitted.optionId);
-    if (!option || option.available === false || option.visible === false) return { ok: false, error: `The selected ${effectiveStep.title} option is unavailable. Refresh your choices.` };
+    if (!option || option.available === false || option.visible === false || (isAbaya && /colou?r/i.test(effectiveStep.title) && option.stock !== undefined && option.stock < quantity)) return { ok: false, error: `The selected ${effectiveStep.title} option does not have enough stock. Refresh your choices.` };
     if (submitted.option !== option.name || Number(submitted.priceAdjustment || 0) !== Number(option.priceAdjustment || 0)) return { ok: false, error: `The saved price for ${effectiveStep.title} changed. Refresh your choices.` };
     verifiedSelections.add(selectionKey(step.id, option.id));
     optionAdjustments += Number(option.priceAdjustment || 0);
@@ -197,6 +202,6 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
     else if (Number(design.fabricPrice || 0) !== 0) return { ok: false, error: 'The selected fabric price could not be verified. Refresh your choices.' };
   }
   const legacyPriority = !steps.length && design?.speed === 'Priority tailoring' ? 350 : 0;
-  const subtotal = Math.max(0, Math.round((basePrice + optionAdjustments + legacyFabric + legacyPriority) * 100) / 100);
+  const subtotal = Math.max(0, Math.round((basePrice + optionAdjustments + legacyFabric + legacyPriority) * quantity * 100) / 100);
   return { ok: true, basePrice, subtotal };
 }

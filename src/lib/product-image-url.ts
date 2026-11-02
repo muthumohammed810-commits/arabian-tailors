@@ -2,6 +2,7 @@ import { isMeasurementGuideImagePath, isMeasurementGuideVideoPath } from './meas
 
 const PRIVATE_BLOB_HOST_SUFFIX = '.private.blob.vercel-storage.com';
 const PRODUCT_IMAGE_PREFIX = 'arabian-tailors/product-images/';
+const ABAYA_PRODUCT_IMAGE_PREFIX = 'arabian-tailors/abaya-product-images/';
 const PRODUCT_IMAGE_FILE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,120}\.(?:jpg|png|webp|gif)$/i;
 
 /** The connected Vercel Blob store is private; uploads must use matching access. */
@@ -9,8 +10,9 @@ export const productImageBlobAccess = 'private' as const;
 
 /** Public storefront delivery is limited to immutable images in the product-images folder. */
 export function isPublicProductImagePath(pathname: string): boolean {
-  if (!pathname.startsWith(PRODUCT_IMAGE_PREFIX)) return false;
-  const filename = pathname.slice(PRODUCT_IMAGE_PREFIX.length);
+  const prefix = pathname.startsWith(PRODUCT_IMAGE_PREFIX) ? PRODUCT_IMAGE_PREFIX : pathname.startsWith(ABAYA_PRODUCT_IMAGE_PREFIX) ? ABAYA_PRODUCT_IMAGE_PREFIX : '';
+  if (!prefix) return false;
+  const filename = pathname.slice(prefix.length);
   return PRODUCT_IMAGE_FILE.test(filename) && !filename.includes('..');
 }
 

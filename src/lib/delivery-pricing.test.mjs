@@ -23,6 +23,51 @@ test('shop-approved zone prefixes quote grouped destinations and exact PIN rules
   assert.equal(DELIVERY_PICKUP_ORIGIN, 'Parappanangadi, Malappuram, Kerala, India');
 });
 
+test('Abaya checkout applies the saved sale price and verifies colour availability and price adjustment on the server', () => {
+  const product = {
+    id: 'abaya-noor', name: 'Noor', category: 'Abaya', price: 5000, salePrice: 4200,
+    customizationSteps: [
+      { id: 'model', title: 'Abaya Style', required: false, options: [{ id: 'classic', name: 'Classic' }] },
+      { id: 'color', title: 'Choose Abaya Colour', required: true, options: [{ id: 'black', name: 'Black', swatch: '#111111', priceAdjustment: 300, stock: 2, available: true, visible: true }] },
+      { id: 'size', title: 'Size', required: true, options: [{ id: 'm', name: 'M', priceAdjustment: 0 }] },
+    ],
+  };
+  const design = { productType: 'Abaya', customization: [
+    { stepId: 'color', optionId: 'black', option: 'Black', priceAdjustment: 300 },
+    { stepId: 'size', optionId: 'm', option: 'M', priceAdjustment: 0 },
+  ] };
+  assert.deepEqual(calculateConfiguredSubtotal(product, design), { ok: true, basePrice: 4200, subtotal: 4500 });
+  assert.equal(calculateConfiguredSubtotal(product, { ...design, productType: 'Kandura' }).basePrice, 4200);
+  assert.match(calculateConfiguredSubtotal(product, { ...design, customization: design.customization.map(item => item.stepId === 'color' ? { ...item, priceAdjustment: 0 } : item) }).error, /saved price.*changed/);
+  assert.match(calculateConfiguredSubtotal({ ...product, customizationSteps: product.customizationSteps.map(step => step.id === 'color' ? { ...step, options: step.options.map(option => ({ ...option, stock: 0 })) } : step) }, design).error, /enough stock/);
+  assert.match(calculateConfiguredSubtotal(product, { ...design, customization: design.customization.filter(item => item.stepId !== 'color') }).error, /Select an option for Select Colour/);
+});
+
+test('Abaya quantity is bounded, included in server subtotal, and limited by tracked colour stock', () => {
+  const product = { id: 'abaya-stock', name: 'Noor', category: 'Abaya', price: 5000, salePrice: 4200, customizationSteps: [
+    { id: 'color', title: 'Choose Abaya Colour', required: true, options: [{ id: 'black', name: 'Black', priceAdjustment: 300, stock: 2, available: true, visible: true }] },
+    { id: 'size', title: 'Size', required: true, options: [{ id: 'm', name: 'M', priceAdjustment: 0 }] },
+  ] };
+  const design = { quantity: 2, customization: [
+    { stepId: 'color', optionId: 'black', option: 'Black', priceAdjustment: 300 },
+    { stepId: 'size', optionId: 'm', option: 'M', priceAdjustment: 0 },
+  ] };
+  assert.deepEqual(calculateConfiguredSubtotal(product, design), { ok: true, basePrice: 4200, subtotal: 9000 });
+  assert.match(calculateConfiguredSubtotal(product, { ...design, quantity: 3 }).error, /enough stock/);
+  assert.match(calculateConfiguredSubtotal(product, { ...design, quantity: 0 }).error, /between 1 and 20/);
+  assert.match(calculateConfiguredSubtotal(product, { ...design, quantity: 21 }).error, /between 1 and 20/);
+  assert.match(calculateConfiguredSubtotal({ ...product, stock: 1, customizationSteps: product.customizationSteps.map(step => step.id === 'color' ? { ...step, options: step.options.map(option => ({ ...option, stock: 5 })) } : step) }, { ...design, quantity: 2 }).error, /product stock/);
+  assert.equal(calculateConfiguredSubtotal({ ...product, stock: 0 }, { ...design, quantity: 2 }).subtotal, 9000, 'zero product stock retains the existing untracked-stock convention');
+});
+
+test('Kandura colour stock behavior is not changed by Abaya quantity validation', () => {
+  const product = { id: 'kandura-stock', name: 'Signature Kandura', category: 'Kandura', price: 2850, customizationSteps: [
+    { id: 'color', title: 'Choose Colour', required: true, options: [{ id: 'ivory', name: 'Ivory', priceAdjustment: 0, stock: 0, available: true, visible: true }] },
+  ] };
+  const design = { productType: 'Kandura', customization: [{ stepId: 'color', optionId: 'ivory', option: 'Ivory', priceAdjustment: 0 }] };
+  assert.deepEqual(calculateConfiguredSubtotal(product, design), { ok: true, basePrice: 2850, subtotal: 2850 });
+});
+
 test('official postal directory provides area metadata only; approved exact PIN fees override zones', () => {
   const directory = { sourceUrl: 'https://www.data.gov.in/resource/all-india-pincode-directory-till-last-month', importedAt: '2026-10-28T00:00:00.000Z', pins: [{ pin: '676303', offices: [{ name: 'Ullanam North B.O', district: 'Malappuram', deliveryStatus: 'Delivery' }] }] };
   const zone = { id: 'zone', area: 'Malappuram zone', prefix: '676', fee: 90, enabled: true };
