@@ -11,6 +11,21 @@ export function getAbayaSizeDescription(option) {
   return option.description.trim() || undefined;
 }
 
+/** Update one standard Abaya size description without changing its price or other option settings. */
+export function updateAbayaSizeDescription(steps, stepId, optionId, description) {
+  if (!Array.isArray(steps) || typeof description !== 'string' || description.length > 500) return steps;
+  return steps.map((step) => {
+    if (step?.id !== stepId || getAbayaManagementStepKind(step.title) !== 'sizes' || !Array.isArray(step.options)) return step;
+    return {
+      ...step,
+      options: step.options.map((option) => {
+        if (option?.id !== optionId || !isStandardAbayaSize(option)) return option;
+        return { ...option, description };
+      }),
+    };
+  });
+}
+
 const isAbaya = (product) => String(product?.category || '').trim().toLowerCase() === 'abaya';
 
 /** Assign each saved Abaya customization step to one Admin section only. */

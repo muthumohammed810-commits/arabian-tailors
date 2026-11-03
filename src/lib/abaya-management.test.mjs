@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getAbayaCustomerSteps, getAbayaManagementStepKind, getAbayaSizeDescription, isValidCustomizationOptionDescription, publicAbayaProductProjection, reorderAbayaProducts, setAbayaProductsVisibility, setAbayaStepOptionsVisibility } from './abaya-size-options.mjs';
+import { getAbayaCustomerSteps, getAbayaManagementStepKind, getAbayaSizeDescription, isValidCustomizationOptionDescription, publicAbayaProductProjection, reorderAbayaProducts, setAbayaProductsVisibility, setAbayaStepOptionsVisibility, updateAbayaSizeDescription } from './abaya-size-options.mjs';
 import { requestAdminStoreData } from './admin-store-request.ts';
 
 test('each Abaya customization step has one Admin section, including miscellaneous options', () => {
@@ -96,7 +96,30 @@ test('customer Abaya size projection preserves optional per-size descriptions', 
   ]);
 });
 
-test('Abaya size descriptions save and reload through an isolated authenticated test storage adapter', async () => {
+test('Admin size editing updates, clears and preserves each Abaya size independently', () => {
+  const steps = [
+    { id: 'sizes', title: 'Select Size', required: true, options: [
+      { id: 'size-s', name: 'S', description: 'Old S text', priceAdjustment: 0, visible: true, available: true, stock: 4 },
+      { id: 'size-m', name: 'M', description: 'Existing M text', priceAdjustment: 120, visible: false, available: true, stock: 2 },
+      { id: 'size-l', name: 'L', priceAdjustment: 0, visible: true, available: true },
+    ] },
+    { id: 'stitching', title: 'Stitching / Style', options: [{ id: 'plain', name: 'Plain' }] },
+  ];
+
+  const edited = updateAbayaSizeDescription(steps, 'sizes', 'size-s', '23 to 45 cm');
+  assert.deepEqual(edited[0].options[0], { ...steps[0].options[0], description: '23 to 45 cm' }, 'price, stock and visibility settings are preserved');
+  assert.deepEqual(edited[0].options[1], steps[0].options[1], 'other size settings remain untouched');
+  assert.deepEqual(edited[1], steps[1], 'other customization sections remain untouched');
+
+  const cleared = updateAbayaSizeDescription(edited, 'sizes', 'size-s', '');
+  assert.equal(cleared[0].options[0].description, '', 'clearing saves a blank value');
+  assert.equal(getAbayaSizeDescription(cleared[0].options[0]), undefined, 'blank text produces no customer placeholder');
+  assert.equal(getAbayaSizeDescription(edited[0].options[0]), '23 to 45 cm', 'the edit does not mutate the prior product draft');
+  assert.strictEqual(updateAbayaSizeDescription(steps, 'sizes', 'size-s', 'x'.repeat(501)), steps, 'over-limit text is rejected');
+  assert.deepEqual(updateAbayaSizeDescription(steps, 'missing', 'size-s', 'text'), steps, 'an unknown step is ignored');
+});
+
+test('Admin-edited Abaya size descriptions save and reload through an isolated test storage adapter', async () => {
   const testAdminSession = Object.freeze({ authenticated: true, id: 'test-admin-fixture' });
   const temporaryStorage = (() => {
     let products = [];
@@ -112,7 +135,7 @@ test('Abaya size descriptions save and reload through an isolated authenticated 
     price: 1000,
     stock: 1,
     customizationSteps: [{ id: 'test-sizes', title: 'Select Size', options: [
-      { id: 'size-s', name: 'S', description: '23 to 45 cm' },
+      { id: 'size-s', name: 'S', priceAdjustment: 0, visible: true, available: true },
       { id: 'size-m', name: 'M', description: '' },
       { id: 'size-l', name: 'L' },
     ] }],
@@ -131,10 +154,14 @@ test('Abaya size descriptions save and reload through an isolated authenticated 
     return new Response(JSON.stringify({ products: await temporaryStorage.read() }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
 
+  const editedProduct = {
+    ...testProduct,
+    customizationSteps: updateAbayaSizeDescription(testProduct.customizationSteps, 'test-sizes', 'size-s', '23 to 45 cm'),
+  };
   const saved = await requestAdminStoreData({
-    method: 'PUT', body: { resource: 'products', products: [testProduct] }, timeoutMs: 100,
+    method: 'PUT', body: { resource: 'products', products: [editedProduct] }, timeoutMs: 100,
     fetcher: testOnlyFetch,
-    validate: (response) => JSON.stringify(response.products) === JSON.stringify([testProduct]),
+    validate: (response) => JSON.stringify(response.products) === JSON.stringify([editedProduct]),
   });
   assert.equal(saved.products[0].customizationSteps[0].options[0].description, '23 to 45 cm');
 
