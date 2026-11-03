@@ -14,6 +14,7 @@ import { ImageUploadError, withAbortableDeadline } from '@/lib/upload-batch';
 import { quoteFlatDelivery, resolveFlatDeliveryFee, type KeralaPostalDirectory, type DeliveryRule } from '@/lib/delivery-pricing';
 import { isRequiredCustomizationSelectionMissing } from '@/lib/custom-reference-order';
 import { effectiveAbayaPrice, getAbayaGalleryImages, isCustomerProductAvailable } from '@/lib/abaya-product.mjs';
+import { getAbayaSizeDescription } from '@/lib/abaya-size-options.mjs';
 
 type ManagedModelCategory = { visible?: boolean; required?: boolean; options: CustomizationOption[] };
 type ManagedModelStep = { id: string; title: string; description?: string; visible?: boolean; required?: boolean; options: CustomizationOption[] };
@@ -480,6 +481,7 @@ export default function Customize() {
               const isColorStep = /colou?r/i.test(item.title);
               const visibleOptions = item.options.filter(option => option.visible !== false && (isAbaya && isColorStep || option.available !== false && (option.stock === undefined || option.stock > 0)));
               const isModelStep = /model/i.test(item.title);
+              const isAbayaSizeStep = isAbaya && /^select size$/i.test(item.title.trim());
               const showCustomMeasurements = needsCustomMeasurements && (customOptionMeasurements.length > 0 || (isKandura && (measurementGuides.length > 0 || Boolean(measurementGuideVideo))));
               return <>
                 {hasModelStep && step === 0 && configuredProduct?.images?.length ? <div className="product-image-gallery">{configuredProduct.images.map((image, index) => <img key={`${image}-${index}`} src={productImageSource(image)} alt={`${configuredProduct.name} image ${index + 1}`} />)}</div> : null}
@@ -488,19 +490,20 @@ export default function Customize() {
                 <div className="dynamic-option-list">
                   {visibleOptions.map(option => {
                     const photos = [...new Set([...(option.images || []), ...(option.image ? [option.image] : [])])];
+                    const sizeDescription = isAbayaSizeStep ? getAbayaSizeDescription(option) : option.description;
                     const expanded = expandedOptionId === option.id;
-                    const hasOptionDetails = Boolean(option.description || photos.length > 0);
+                    const hasOptionDetails = Boolean((option.description && !isAbayaSizeStep) || photos.length > 0);
                     const optionUnavailable = option.available === false || option.stock !== undefined && option.stock <= 0;
                     const hasVisual = isModelStep || photos.length > 0 || (isColorStep && Boolean(getOptionSwatch(option)));
                     return <article className={`dynamic-option-item ${isModelStep ? 'model-option-item' : ''} ${/fabric|cloth/i.test(item.title) ? 'fabric-option-item' : ''}`} key={option.id}>
                       <button type="button" disabled={isAbaya && isColorStep && optionUnavailable} className={`dynamic-option-choice ${hasVisual ? 'has-visual' : ''} ${isModelStep ? 'model-option-card' : ''} ${/fabric|cloth/i.test(item.title) && photos.length ? 'fabric-option-card' : ''} ${isColorStep && hasVisual ? 'color-option-card' : ''} ${isColorStep && photos.length ? 'color-option-photo-card' : ''} ${optionUnavailable ? 'is-unavailable' : ''} ${chosen?.id === option.id ? 'selected' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => isModelStep ? { [item.id]: option } : ({ ...previous, [item.id]: option })); if (hasOptionDetails) setExpandedOptionId(expanded ? null : option.id); }}>
                         {isColorStep && getOptionSwatch(option) ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: getOptionSwatch(option) }} aria-label={`${option.name} swatch`} /> : null}
                         {isModelStep ? <CustomOptionImage src={photos[0]} name={option.name} modelCard /> : photos.length > 0 ? <CustomOptionImage src={photos[0]} name={option.name} fallbackColor={isColorStep ? getOptionSwatch(option) : undefined} /> : null}
-                         <span className="dynamic-option-copy"><b>{option.name}</b>{option.description && <small className="subtle">{option.description}</small>}{optionUnavailable && <small className="subtle">Currently unavailable</small>}</span>
+                         <span className="dynamic-option-copy"><b>{option.name}</b>{sizeDescription && <small className={`subtle ${isAbayaSizeStep ? 'abaya-size-description' : ''}`}>{sizeDescription}</small>}{optionUnavailable && <small className="subtle">Currently unavailable</small>}</span>
                         <b>{isModelStep && option.basePrice !== undefined ? `₹${option.basePrice.toLocaleString('en-IN')} base` : (option.priceAdjustment || 0) > 0 ? `+ ₹${option.priceAdjustment!.toLocaleString('en-IN')}` : (option.priceAdjustment || 0) < 0 ? `− ₹${Math.abs(option.priceAdjustment!).toLocaleString('en-IN')}` : 'Included'}</b>
                       </button>
                       {hasOptionDetails && <button type="button" className="option-details-toggle" aria-expanded={expanded} onClick={() => setExpandedOptionId(expanded ? null : option.id)}>{expanded ? 'Hide details' : `View details${photos.length > 1 ? ` · ${photos.length} photos` : ''}`}</button>}
-                      {expanded && hasOptionDetails && <div className="model-option-details">{option.description && <p className="subtle">{option.description}</p>}{photos.length > 0 && <div className="model-option-gallery">{photos.map((photo, index) => <img key={`${photo}-${index}`} src={productImageSource(photo)} alt={`${option.name} photo ${index + 1}`} />)}</div>}</div>}
+                      {expanded && hasOptionDetails && <div className="model-option-details">{option.description && !isAbayaSizeStep && <p className="subtle">{option.description}</p>}{photos.length > 0 && <div className="model-option-gallery">{photos.map((photo, index) => <img key={`${photo}-${index}`} src={productImageSource(photo)} alt={`${option.name} photo ${index + 1}`} />)}</div>}</div>}
                     </article>;
                   })}
                   {!visibleOptions.length && <p className="subtle">No options are currently shown. Please contact the atelier.</p>}

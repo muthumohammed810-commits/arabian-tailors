@@ -19,7 +19,7 @@ import { listAllBlobPages } from '@/lib/blob-pagination.mjs';
 import { publicStoreSettings } from '@/lib/public-store-settings.mjs';
 import { abayaProductImagePathFromUrl, isAbayaProductImageUrlForStore, isValidAbayaProductCode, isValidAbayaSalePrice, normalizeAbayaProductCode } from '@/lib/abaya-product.mjs';
 import { isPublicProductImagePath } from '@/lib/product-image-url';
-import { publicAbayaProductProjection } from '@/lib/abaya-size-options.mjs';
+import { isValidCustomizationOptionDescription, publicAbayaProductProjection } from '@/lib/abaya-size-options.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -74,7 +74,7 @@ function validCustomizationSteps(value: unknown) {
     ids.add(step.id);
     const optionIds = new Set<string>();
     const validOption = (option: any, allowModelSettings: boolean): boolean => {
-      if (!option || typeof option !== 'object' || Array.isArray(option) || !validText(option.id, 100) || optionIds.has(option.id) || !validText(option.name, 160) || (option.description !== undefined && (typeof option.description !== 'string' || option.description.length > 500)) || (option.image !== undefined && (typeof option.image !== 'string' || option.image.length > 2000)) || (option.images !== undefined && (!Array.isArray(option.images) || !option.images.every((image: unknown) => typeof image === 'string' && image.length <= 2000))) || (option.priceAdjustment !== undefined && (!Number.isFinite(option.priceAdjustment) || Math.abs(option.priceAdjustment) > 1_000_000)) || (option.basePrice !== undefined && (!Number.isFinite(option.basePrice) || option.basePrice < 0 || option.basePrice > 1_000_000)) || (option.stock !== undefined && (!Number.isInteger(option.stock) || option.stock < 0 || option.stock > 1_000_000)) || (option.available !== undefined && typeof option.available !== 'boolean') || (option.visible !== undefined && typeof option.visible !== 'boolean')) return false;
+      if (!option || typeof option !== 'object' || Array.isArray(option) || !validText(option.id, 100) || optionIds.has(option.id) || !validText(option.name, 160) || !isValidCustomizationOptionDescription(option.description) || (option.image !== undefined && (typeof option.image !== 'string' || option.image.length > 2000)) || (option.images !== undefined && (!Array.isArray(option.images) || !option.images.every((image: unknown) => typeof image === 'string' && image.length <= 2000))) || (option.priceAdjustment !== undefined && (!Number.isFinite(option.priceAdjustment) || Math.abs(option.priceAdjustment) > 1_000_000)) || (option.basePrice !== undefined && (!Number.isFinite(option.basePrice) || option.basePrice < 0 || option.basePrice > 1_000_000)) || (option.stock !== undefined && (!Number.isInteger(option.stock) || option.stock < 0 || option.stock > 1_000_000)) || (option.available !== undefined && typeof option.available !== 'boolean') || (option.visible !== undefined && typeof option.visible !== 'boolean')) return false;
       optionIds.add(option.id);
       if (option.swatch !== undefined && (typeof option.swatch !== 'string' || !(/^#[0-9a-f]{6}$/i.test(option.swatch) || /^rgb\(\s*(?:25[0-5]|2[0-4]\d|1\d\d|\d?\d)\s*,\s*(?:25[0-5]|2[0-4]\d|1\d\d|\d?\d)\s*,\s*(?:25[0-5]|2[0-4]\d|1\d\d|\d?\d)\s*\)$/i.test(option.swatch)))) return false;
       return !allowModelSettings || validModelCustomization(option.modelCustomization, validOption);

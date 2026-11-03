@@ -1,5 +1,16 @@
 export const ABAYA_STANDARD_SIZES = Object.freeze(['S', 'M', 'L', 'XL', 'XXL']);
 
+/** Customization option descriptions are plain text bounded for safe persistence. */
+export function isValidCustomizationOptionDescription(value) {
+  return value === undefined || (typeof value === 'string' && value.length <= 500);
+}
+
+/** Return displayable size text, treating missing, empty, and whitespace-only descriptions as blank. */
+export function getAbayaSizeDescription(option) {
+  if (typeof option?.description !== 'string') return undefined;
+  return option.description.trim() || undefined;
+}
+
 const isAbaya = (product) => String(product?.category || '').trim().toLowerCase() === 'abaya';
 
 /** Assign each saved Abaya customization step to one Admin section only. */

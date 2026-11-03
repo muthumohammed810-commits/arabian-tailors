@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getAbayaCustomerSteps, getAbayaManagementStepKind, reorderAbayaProducts, setAbayaProductsVisibility, setAbayaStepOptionsVisibility } from './abaya-size-options.mjs';
+import { getAbayaCustomerSteps, getAbayaManagementStepKind, getAbayaSizeDescription, isValidCustomizationOptionDescription, publicAbayaProductProjection, reorderAbayaProducts, setAbayaProductsVisibility, setAbayaStepOptionsVisibility } from './abaya-size-options.mjs';
+import { requestAdminStoreData } from './admin-store-request.ts';
 
 test('each Abaya customization step has one Admin section, including miscellaneous options', () => {
   const cases = [
@@ -77,4 +78,80 @@ test('customer Abaya filtering excludes hidden steps, hidden options, fabrics, m
   assert.deepEqual(steps.map((step) => step.id), ['color', 'sizes']);
   assert.deepEqual(steps[0].options.map((option) => option.id), ['visible', 'sold-out']);
   assert.deepEqual(steps[1].options.map((option) => option.id), ['m']);
+});
+
+test('customer Abaya size projection preserves optional per-size descriptions', () => {
+  const steps = getAbayaCustomerSteps([
+    { id: 'sizes', title: 'Select Size', options: [
+      { id: 's', name: 'S', description: '23 to 45 cm' },
+      { id: 'm', name: 'M', description: '26 to 48 cm' },
+      { id: 'l', name: 'L' },
+    ] },
+  ]);
+
+  assert.deepEqual(steps[0].options.map(({ name, description }) => ({ name, description })), [
+    { name: 'S', description: '23 to 45 cm' },
+    { name: 'M', description: '26 to 48 cm' },
+    { name: 'L', description: undefined },
+  ]);
+});
+
+test('Abaya size descriptions save and reload through an isolated authenticated test storage adapter', async () => {
+  const testAdminSession = Object.freeze({ authenticated: true, id: 'test-admin-fixture' });
+  const temporaryStorage = (() => {
+    let products = [];
+    return {
+      async read() { return structuredClone(products); },
+      async write(nextProducts) { products = structuredClone(nextProducts); },
+    };
+  })();
+  const testProduct = {
+    id: 'test-abaya-size-descriptions',
+    name: 'Test Abaya',
+    category: 'Abaya',
+    price: 1000,
+    stock: 1,
+    customizationSteps: [{ id: 'test-sizes', title: 'Select Size', options: [
+      { id: 'size-s', name: 'S', description: '23 to 45 cm' },
+      { id: 'size-m', name: 'M', description: '' },
+      { id: 'size-l', name: 'L' },
+    ] }],
+  };
+
+  const testOnlyFetch = async (_url, init) => {
+    assert.equal(testAdminSession.authenticated, true, 'the fixture represents an authenticated Admin session');
+    assert.equal(init.credentials, 'same-origin', 'the existing Admin request helper carries session credentials');
+    if (init.method === 'PUT') {
+      const body = JSON.parse(init.body);
+      assert.equal(body.resource, 'products');
+      assert.ok(body.products.every((product) => product.customizationSteps?.every((step) => step.options.every((option) => isValidCustomizationOptionDescription(option.description)))));
+      await temporaryStorage.write(body.products);
+      return new Response(JSON.stringify({ ok: true, products: await temporaryStorage.read() }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ products: await temporaryStorage.read() }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  const saved = await requestAdminStoreData({
+    method: 'PUT', body: { resource: 'products', products: [testProduct] }, timeoutMs: 100,
+    fetcher: testOnlyFetch,
+    validate: (response) => JSON.stringify(response.products) === JSON.stringify([testProduct]),
+  });
+  assert.equal(saved.products[0].customizationSteps[0].options[0].description, '23 to 45 cm');
+
+  const freshlyLoaded = await requestAdminStoreData({
+    method: 'GET', timeoutMs: 100, fetcher: testOnlyFetch,
+    validate: (response) => Array.isArray(response.products),
+  });
+  const publicProduct = publicAbayaProductProjection(freshlyLoaded.products[0]);
+  const sizeOptions = publicProduct.customizationSteps.find((step) => step.title === 'Select Size').options;
+
+  assert.equal(sizeOptions.find((option) => option.name === 'S').description, '23 to 45 cm', 'the fresh store read retains the saved description');
+  assert.equal(getAbayaSizeDescription(sizeOptions.find((option) => option.name === 'S')), '23 to 45 cm', 'the customer size-card renderer receives the text below the size name');
+  assert.equal(getAbayaSizeDescription(sizeOptions.find((option) => option.name === 'M')), undefined, 'an empty description produces no customer placeholder');
+  assert.equal(getAbayaSizeDescription(sizeOptions.find((option) => option.name === 'L')), undefined, 'a legacy size without a description remains valid');
+  assert.equal(isValidCustomizationOptionDescription('x'.repeat(500)), true);
+  assert.equal(isValidCustomizationOptionDescription('x'.repeat(501)), false);
+  assert.equal(isValidCustomizationOptionDescription(23), false);
+  await temporaryStorage.write([]);
+  assert.deepEqual(await temporaryStorage.read(), [], 'the memory-only test storage is cleared after the scenario');
 });
