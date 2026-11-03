@@ -226,9 +226,9 @@ test('server total uses the approved exact-PIN fee when a broader zone also matc
   ], directory).status, 'unavailable');
 });
 
-test('server pricing uses saved model base and configured option prices', () => {
-  const product = { id: 'kandura', name: 'Kandura', price: 2000, customizationSteps: [
-    { id: 'models', title: 'Choose Your Kandura Model', required: true, options: [{ id: 'saudi', name: 'Saudi', basePrice: 2300, priceAdjustment: 100 }] },
+test('server pricing uses saved model base and configured option prices without changing Kandura image validation', () => {
+  const product = { id: 'kandura', name: 'Kandura', category: 'Kandura', price: 2000, customizationSteps: [
+    { id: 'models', title: 'Choose Your Kandura Model', required: true, options: [{ id: 'saudi', name: 'Saudi', basePrice: 2300, priceAdjustment: 100, image: 'https://example.com/kandura-model.jpg' }] },
     { id: 'colors', title: 'Choose Color', required: true, options: [{ id: 'ivory', name: 'Ivory', priceAdjustment: 50 }] },
   ] };
   const result = calculateConfiguredSubtotal(product, { selectedModel: { id: 'saudi' }, customization: [
@@ -251,6 +251,26 @@ test('server accepts visible Abaya stitching/custom options and rejects hidden m
   assert.deepEqual(calculateConfiguredSubtotal(product, { customization: choices }), { ok: true, basePrice: 1000, subtotal: 1100 });
   assert.equal(calculateConfiguredSubtotal(product, { customization: [...choices, { stepId: 'stitch', optionId: 'hidden', option: 'Hidden', priceAdjustment: 0 }] }).ok, false);
   assert.equal(calculateConfiguredSubtotal({ ...product, customizationSteps: product.customizationSteps.map(step => step.id === 'model' ? { ...step, options: step.options.map(option => ({ ...option, visible: false })) } : step) }, { selectedModel: { id: 'classic' }, customization: choices }).ok, false);
+});
+
+test('server rejects Abaya model selections without a saved Abaya gallery photo', () => {
+  const abaya = { id: 'abaya-model-photo-validation', name: 'Noor Abaya', category: 'Abaya', price: 350, customizationSteps: [
+    { id: 'models', title: 'Select Abaya Model', required: false, options: [{ id: 'classic', name: 'Classic', visible: true, available: true, images: [] }] },
+    { id: 'size', title: 'Select Size', required: true, options: [{ id: 'm', name: 'M' }] },
+  ] };
+  const design = { selectedModel: { id: 'classic' }, customization: [{ stepId: 'size', optionId: 'm', option: 'M', priceAdjustment: 0 }] };
+  assert.deepEqual(calculateConfiguredSubtotal(abaya, design, [], 'store-test'), { ok: false, error: 'The selected Abaya model has no valid photo in the configured Abaya image store. Refresh your choices.' });
+  const withPhoto = { ...abaya, customizationSteps: abaya.customizationSteps.map((step) => step.id === 'models' ? { ...step, options: [{ ...step.options[0], image: 'https://store-test.private.blob.vercel-storage.com/arabian-tailors/abaya-product-images/12345678-1234-1234-1234-123456789abc.jpg' }] } : step) };
+  assert.deepEqual(calculateConfiguredSubtotal(withPhoto, design, [], 'store-test'), { ok: true, subtotal: 350, basePrice: 350 });
+  for (const url of [
+    'https://other-store.private.blob.vercel-storage.com/arabian-tailors/abaya-product-images/12345678-1234-1234-1234-123456789abc.jpg',
+    'https://stale-store.private.blob.vercel-storage.com/arabian-tailors/abaya-product-images/12345678-1234-1234-1234-123456789abc.jpg',
+    'https://example.com/arabian-tailors/abaya-product-images/12345678-1234-1234-1234-123456789abc.jpg',
+    'https://store-test.private.blob.vercel-storage.com/arabian-tailors/orders/order.json',
+  ]) {
+    const invalidPhoto = { ...abaya, customizationSteps: abaya.customizationSteps.map((step) => step.id === 'models' ? { ...step, options: [{ ...step.options[0], image: url }] } : step) };
+    assert.equal(calculateConfiguredSubtotal(invalidPhoto, design, [], 'store-test').ok, false, `checkout rejects ${url}`);
+  }
 });
 
 test('server rejects client-tampered option charges and missing required choices', () => {
@@ -289,7 +309,7 @@ test('model-specific customization prices are counted once and visible Abaya cus
   ] }).subtotal, 2025);
 
   const abaya = { id: 'abaya', name: 'Abaya', price: 4000, category: 'Abaya', customizationSteps: [
-    { id: 'model', title: 'Abaya Style', required: true, options: [{ id: 'classic', name: 'Classic', priceAdjustment: 0 }] },
+    { id: 'model', title: 'Abaya Style', required: true, options: [{ id: 'classic', name: 'Classic', priceAdjustment: 0, images: ['https://store-test.private.blob.vercel-storage.com/arabian-tailors/abaya-product-images/12345678-1234-1234-1234-123456789abc.jpg'] }] },
     { id: 'size', title: 'Size', required: true, options: [{ id: 'm', name: 'M', priceAdjustment: 0 }] },
     { id: 'abaya-extra', title: 'Embroidery', required: true, options: [{ id: 'none', name: 'None', priceAdjustment: 500 }] },
   ] };
@@ -298,7 +318,7 @@ test('model-specific customization prices are counted once and visible Abaya cus
     { stepId: 'size', optionId: 'm', option: 'M', priceAdjustment: 0 },
   ];
   assert.equal(calculateConfiguredSubtotal(abaya, { productType: 'Abaya', selectedModel: { id: 'classic' }, customization: selections }).ok, false, 'required visible custom options remain required');
-  const result = calculateConfiguredSubtotal(abaya, { productType: 'Abaya', selectedModel: { id: 'classic' }, customization: [...selections, { stepId: 'abaya-extra', optionId: 'none', option: 'None', priceAdjustment: 500 }] });
+  const result = calculateConfiguredSubtotal(abaya, { productType: 'Abaya', selectedModel: { id: 'classic' }, customization: [...selections, { stepId: 'abaya-extra', optionId: 'none', option: 'None', priceAdjustment: 500 }] }, [], 'store-test');
   assert.deepEqual(result, { ok: true, basePrice: 4000, subtotal: 4500 });
 });
 

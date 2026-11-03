@@ -1,3 +1,5 @@
+import { abayaModelPhotoUrls, hasAbayaModelPhoto, isAbayaModelStep } from './abaya-model-management.mjs';
+
 export const ABAYA_STANDARD_SIZES = Object.freeze(['S', 'M', 'L', 'XL', 'XXL']);
 
 /** Customization option descriptions are plain text bounded for safe persistence. */
@@ -75,14 +77,14 @@ function isStandardAbayaSize(option) {
  * @param {Step[]} steps
  * @returns {(Step & {title:string,required?:boolean,options:unknown[]})[]}
  */
-export function getAbayaCustomerSteps(steps) {
+export function getAbayaCustomerSteps(steps, abayaStoreId) {
   if (!Array.isArray(steps)) return [];
   return steps.flatMap((step) => {
     if (!step || step.available === false || step.visible === false) return [];
     const title = String(step.title || '').trim();
     const lower = title.toLowerCase();
     if (/fabric|cloth|measurement/.test(lower)) return [];
-    const isModel = /model/.test(lower) || /^abaya\s*style$/i.test(title);
+    const isModel = isAbayaModelStep(step);
     const isColor = /colou?r/.test(lower);
     const isSize = /^(?:(?:choose|select)\s+)?(?:abaya\s+)?size(?:\s+selection)?$/i.test(title);
     const isStitchingOrStyle = /stitch|style/.test(lower) && !isModel;
@@ -90,8 +92,15 @@ export function getAbayaCustomerSteps(steps) {
     if (!isModel && !isColor && !isSize && !isStitchingOrStyle && !isCustomization) return [];
     const options = (Array.isArray(step.options) ? step.options : [])
       .filter((option) => option && typeof option === 'object' && option.visible !== false)
-      .filter((option) => !isSize || isStandardAbayaSize(option));
-    if (!options.length && !isSize) return [];
+      .filter((option) => !isModel || hasAbayaModelPhoto(option, abayaStoreId))
+      .filter((option) => !isSize || isStandardAbayaSize(option))
+      .map((option) => isModel
+        ? (() => {
+          const images = abayaModelPhotoUrls(option, abayaStoreId);
+          return { ...option, image: images[0] || '', images };
+        })()
+        : option);
+    if (!options.length && !isSize && !isModel) return [];
     return [{
       ...step,
       title: isModel ? 'Select Abaya Model' : isColor ? 'Select Colour' : isSize ? 'Select Size' : title,
@@ -103,12 +112,23 @@ export function getAbayaCustomerSteps(steps) {
 }
 
 /** Public Abaya data contains visible model, colour, standard-size, stitching and custom choices only. */
-export function publicAbayaProductProjection(product) {
+export function publicAbayaProductProjection(product, abayaStoreId) {
   if (!product || String(product.category || '').trim().toLowerCase() !== 'abaya') return product;
   const { measurements, measurementsEnabled, measurementGuides, measurementGuideVideo, ...publicProduct } = product;
   void measurements;
   void measurementsEnabled;
   void measurementGuides;
   void measurementGuideVideo;
-  return { ...publicProduct, customizationSteps: getAbayaCustomerSteps(Array.isArray(product.customizationSteps) ? product.customizationSteps : []) };
+  const sourceSteps = Array.isArray(product.customizationSteps) ? product.customizationSteps : [];
+  const customizationSteps = getAbayaCustomerSteps(sourceSteps, abayaStoreId);
+  if (!sourceSteps.some(isAbayaModelStep)) {
+    customizationSteps.unshift({
+      id: `${product.id}-customer-model-selection`,
+      title: 'Select Abaya Model',
+      description: 'Models will be available soon. You can also provide a reference photo.',
+      required: false,
+      options: [],
+    });
+  }
+  return { ...publicProduct, customizationSteps };
 }

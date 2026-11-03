@@ -9,7 +9,7 @@ import { createUpiPaymentUrl } from '@/lib/upi-payment';
 import { customizationDefaults, defaultMeasurements } from '@/lib/customization-defaults';
 import { productImageSource } from '@/lib/product-image-url';
 import { upload } from '@vercel/blob/client';
-import { MODEL_REFERENCE_PREFIX, getAbayaCustomerSteps, isModelReferenceUrl, validateModelReferenceFile } from '@/lib/abaya-customization';
+import { MODEL_REFERENCE_PREFIX, isModelReferenceUrl, validateModelReferenceFile } from '@/lib/abaya-customization';
 import { ImageUploadError, withAbortableDeadline } from '@/lib/upload-batch';
 import { quoteFlatDelivery, resolveFlatDeliveryFee, type KeralaPostalDirectory, type DeliveryRule } from '@/lib/delivery-pricing';
 import { isRequiredCustomizationSelectionMissing } from '@/lib/custom-reference-order';
@@ -183,7 +183,8 @@ export default function Customize() {
     }
   }
   const customSteps = (isAbaya
-    ? getAbayaCustomerSteps(customStepsWithModel.filter(item => item.available !== false))
+    // The public Store Data API already projects Abaya model photos against the configured Blob store ID.
+    ? customStepsWithModel.filter(item => item.available !== false)
     : customStepsWithModel.filter(item => item.available !== false));
   const hasStoredCustomization = (configuredProduct?.customizationSteps?.length || 0) > 0;
   const hasGarmentDefaults = (!selectedProduct || isAbaya || isKandura) && !hasStoredCustomization;
@@ -496,7 +497,7 @@ export default function Customize() {
                     const optionUnavailable = option.available === false || option.stock !== undefined && option.stock <= 0;
                     const hasVisual = isModelStep || photos.length > 0 || (isColorStep && Boolean(getOptionSwatch(option)));
                     return <article className={`dynamic-option-item ${isModelStep ? 'model-option-item' : ''} ${/fabric|cloth/i.test(item.title) ? 'fabric-option-item' : ''}`} key={option.id}>
-                      <button type="button" disabled={isAbaya && isColorStep && optionUnavailable} className={`dynamic-option-choice ${hasVisual ? 'has-visual' : ''} ${isModelStep ? 'model-option-card' : ''} ${/fabric|cloth/i.test(item.title) && photos.length ? 'fabric-option-card' : ''} ${isColorStep && hasVisual ? 'color-option-card' : ''} ${isColorStep && photos.length ? 'color-option-photo-card' : ''} ${optionUnavailable ? 'is-unavailable' : ''} ${chosen?.id === option.id ? 'selected' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => isModelStep ? { [item.id]: option } : ({ ...previous, [item.id]: option })); if (hasOptionDetails) setExpandedOptionId(expanded ? null : option.id); }}>
+                      <button type="button" disabled={isAbaya && (isColorStep || isModelStep) && optionUnavailable} className={`dynamic-option-choice ${hasVisual ? 'has-visual' : ''} ${isModelStep ? 'model-option-card' : ''} ${/fabric|cloth/i.test(item.title) && photos.length ? 'fabric-option-card' : ''} ${isColorStep && hasVisual ? 'color-option-card' : ''} ${isColorStep && photos.length ? 'color-option-photo-card' : ''} ${optionUnavailable ? 'is-unavailable' : ''} ${chosen?.id === option.id ? 'selected' : ''}`} aria-pressed={chosen?.id === option.id} onClick={() => { setCustomSelections(previous => isModelStep ? { [item.id]: option } : ({ ...previous, [item.id]: option })); if (hasOptionDetails) setExpandedOptionId(expanded ? null : option.id); }}>
                         {isColorStep && getOptionSwatch(option) ? <span className="dynamic-option-color-swatch" style={{ backgroundColor: getOptionSwatch(option) }} aria-label={`${option.name} swatch`} /> : null}
                         {isModelStep ? <CustomOptionImage src={photos[0]} name={option.name} modelCard /> : photos.length > 0 ? <CustomOptionImage src={photos[0]} name={option.name} fallbackColor={isColorStep ? getOptionSwatch(option) : undefined} /> : null}
                          <span className="dynamic-option-copy"><b>{option.name}</b>{sizeDescription && <small className={`subtle ${isAbayaSizeStep ? 'abaya-size-description' : ''}`}>{sizeDescription}</small>}{optionUnavailable && <small className="subtle">Currently unavailable</small>}</span>
@@ -506,7 +507,7 @@ export default function Customize() {
                       {expanded && hasOptionDetails && <div className="model-option-details">{option.description && !isAbayaSizeStep && <p className="subtle">{option.description}</p>}{photos.length > 0 && <div className="model-option-gallery">{photos.map((photo, index) => <img key={`${photo}-${index}`} src={productImageSource(photo)} alt={`${option.name} photo ${index + 1}`} />)}</div>}</div>}
                     </article>;
                   })}
-                  {!visibleOptions.length && <p className="subtle">No options are currently shown. Please contact the atelier.</p>}
+                  {!visibleOptions.length && <p className="subtle">{isAbaya&&isModelStep?'Models will be available soon.':'No options are currently shown. Please contact the atelier.'}</p>}
                 </div>
                 {isModelStep && <section className="abaya-reference-upload" aria-label="Model reference photo">
                   <div><h3 className="serif">Upload a model reference photo</h3><p className="subtle">Optional. JPG, PNG or WebP · up to 10 MB. The photo is stored privately and attached to your order.</p></div>

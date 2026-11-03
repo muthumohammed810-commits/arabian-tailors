@@ -19,6 +19,7 @@ import { listAllBlobPages } from '@/lib/blob-pagination.mjs';
 import { publicStoreSettings } from '@/lib/public-store-settings.mjs';
 import { abayaProductImagePathFromUrl, isAbayaProductImageUrlForStore, isValidAbayaProductCode, isValidAbayaSalePrice, normalizeAbayaProductCode } from '@/lib/abaya-product.mjs';
 import { isPublicProductImagePath } from '@/lib/product-image-url';
+import { areAbayaProductImagesFromStore } from '@/lib/abaya-model-management.mjs';
 import { isValidCustomizationOptionDescription, publicAbayaProductProjection } from '@/lib/abaya-size-options.mjs';
 
 export const runtime = 'nodejs';
@@ -293,7 +294,7 @@ export async function GET() {
       return json({ ...store, orders, customers, orderSummary: summarizeOrders(orders) });
     }
     const products = store.products.filter(p => p.available !== false).map((product: any) => ({
-      ...publicAbayaProductProjection(product),
+      ...publicAbayaProductProjection(product, process.env.ABAYA_BLOB_STORE_ID || ''),
       ...(/kandura/i.test(String(product.category || '')) && Array.isArray(product.measurements) ? { measurements: publishedMeasurementFields(product.measurements, product.id, product.measurementsEnabled !== false) } : {}),
       ...(/kandura/i.test(String(product.category || '')) && product.measurementGuideVideo ? { measurementGuideVideo: publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id, product.measurementsEnabled !== false) } : {}),
       ...(/kandura/i.test(String(product.category || '')) && Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
@@ -333,6 +334,10 @@ export async function PUT(request: Request) {
     if (body.resource === 'products') {
       if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.productCode === undefined || typeof p.productCode === 'string' && p.productCode.length <= 32) && (p.salePrice === undefined || p.salePrice === null || Number.isFinite(p.salePrice) && p.salePrice >= 0) && (p.abayaCategory === undefined || typeof p.abayaCategory === 'string' && p.abayaCategory.length <= 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && isValidMeasurementFields(p.measurements, p.id) && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean') && (p.measurementGuideVideo === undefined || isValidMeasurementGuideVideo(p.measurementGuideVideo, p.id)) && (p.measurementGuides === undefined || isValidMeasurementGuideList(p.measurementGuides, p.id)) && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000) && (p.images === undefined || Array.isArray(p.images) && p.images.every((image: any) => typeof image === 'string' && image.length <= 2000)))) return json({ error: 'Invalid product list.' }, 400);
       if (new Set(body.products.map((p: any) => p.id)).size !== body.products.length) return json({ error: 'Product IDs must be unique.' }, 400);
+      const abayaStoreId = process.env.ABAYA_BLOB_STORE_ID || '';
+      if (body.products.some((product: any) => !areAbayaProductImagesFromStore(product, abayaStoreId))) {
+        return json({ error: abayaStoreId ? 'Abaya photos must belong to the configured private Abaya image store.' : 'Abaya image storage is not configured.' }, abayaStoreId ? 400 : 503);
+      }
       const store = await readStore();
       const priorProducts = new Map(store.products.map((product: any) => [product.id, product]));
       const abayaProducts = body.products.filter((product: any) => String(product.category).trim().toLowerCase() === 'abaya');
@@ -528,7 +533,7 @@ export async function POST(request: Request) {
     const product = store.products.find((item: any) => item.id === order.productId);
     if (!product || product.available === false) return json({ error: 'This product is not currently available. Refresh the page and try again.' }, 409);
     if (order.design?.customerReferencePhoto !== undefined && !isGarmentReferencePhotoForOrder(order.design, order.id, String(product.category || ''))) return json({ error: 'The customer model reference photo does not match this product category.' }, 400);
-    const pricing = calculateConfiguredSubtotal(product, order.design, store.products.filter((item: any) => String(item.category || '').toLowerCase() === 'fabric'));
+    const pricing = calculateConfiguredSubtotal(product, order.design, store.products.filter((item: any) => String(item.category || '').toLowerCase() === 'fabric'), process.env.ABAYA_BLOB_STORE_ID || '');
     if (!pricing.ok) return json({ error: pricing.error }, 400);
     if (Number(order.basePrice) !== pricing.basePrice) return json({ error: 'The product price changed. Refresh your choices before placing the order.' }, 409);
     const deliveryQuote = quoteFlatDelivery(order.delivery.postal, store.settings.deliveryRules || [], store.settings.keralaPinDirectory || null, resolveFlatDeliveryFee(store.settings.flatDeliveryFee), store.settings.restrictDeliveryToConfiguredRules === true);

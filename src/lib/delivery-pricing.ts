@@ -1,6 +1,7 @@
 import { isOfficialIndiaPostPinSource } from './delivery-rule-csv.mjs';
 import { effectiveAbayaPrice } from './abaya-product.mjs';
 import { getAbayaCustomerSteps } from './abaya-size-options.mjs';
+import { hasAbayaModelPhoto } from './abaya-model-management.mjs';
 
 /** Fixed shop dispatch location shown in Admin; this is not a courier quote. */
 export const DELIVERY_PICKUP_ORIGIN = 'Parappanangadi, Malappuram, Kerala, India';
@@ -109,12 +110,12 @@ export function quoteFlatDelivery(
   return { status: 'available', ...directoryInfo, ...(coverage?.area && !directoryInfo.area ? { area: coverage.area } : {}), fee: roundedFee, message: roundedFee === 0 ? 'Delivery Fee: FREE' : `Delivery Fee: ₹${roundedFee.toLocaleString('en-IN')}` };
 }
 
-type PriceOption = { id: string; name: string; priceAdjustment?: number; basePrice?: number; stock?: number; available?: boolean; visible?: boolean };
+type PriceOption = { id: string; name: string; priceAdjustment?: number; basePrice?: number; stock?: number; available?: boolean; visible?: boolean; image?: string; images?: string[] };
 type PriceStep = { id: string; title: string; required?: boolean; available?: boolean; visible?: boolean; options: PriceOption[] };
 type PriceProduct = { id: string; name: string; price: number; salePrice?: number | null; stock?: number; category?: string; customizationSteps?: PriceStep[] };
 
 /** Calculate the merchandise subtotal from the current stored product configuration. */
-export function calculateConfiguredSubtotal(product: PriceProduct, design: any, fabricProducts: PriceProduct[] = []): { ok: true; subtotal: number; basePrice: number } | { ok: false; error: string } {
+export function calculateConfiguredSubtotal(product: PriceProduct, design: any, fabricProducts: PriceProduct[] = [], abayaStoreId = ''): { ok: true; subtotal: number; basePrice: number } | { ok: false; error: string } {
   if (!product || !Number.isFinite(product.price) || product.price < 0) return { ok: false, error: 'The configured product price is unavailable.' };
   const steps = Array.isArray(product.customizationSteps) ? product.customizationSteps : [];
   // Product category comes from private store data; never let a browser-submitted design type disable Abaya validation.
@@ -122,13 +123,14 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
   const quantity = isAbaya ? (design?.quantity ?? 1) : 1;
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) return { ok: false, error: 'Choose a quantity between 1 and 20.' };
   if (isAbaya && Number.isInteger(product.stock) && product.stock! > 0 && quantity > product.stock!) return { ok: false, error: 'The requested quantity exceeds the available product stock.' };
-  const activeSteps = isAbaya ? getAbayaCustomerSteps(steps) : steps;
+  const activeSteps = isAbaya ? getAbayaCustomerSteps(steps, abayaStoreId) : steps;
   const selections = Array.isArray(design?.customization) ? design.customization : [];
   const selectedModelId = typeof design?.selectedModel?.id === 'string' ? design.selectedModel.id : '';
   const modelStep = steps.find(step => isAbaya ? /model/i.test(step.title) || /^abaya\s*style$/i.test(step.title.trim()) : /model/i.test(step.title));
   const model = selectedModelId ? modelStep?.options.find(option => option.id === selectedModelId) : undefined;
   // A named model is optional; customers can describe the garment with a private reference photo or proceed without one.
   if (selectedModelId && (!model || modelStep?.available === false || modelStep?.visible === false || model.available === false || model.visible === false)) return { ok: false, error: 'The selected model is no longer available. Refresh your choices.' };
+  if (selectedModelId && isAbaya && !hasAbayaModelPhoto(model, abayaStoreId)) return { ok: false, error: 'The selected Abaya model has no valid photo in the configured Abaya image store. Refresh your choices.' };
   const basePrice = isAbaya ? effectiveAbayaPrice(product) : model?.basePrice ?? product.price;
   if (!Number.isFinite(basePrice) || basePrice < 0) return { ok: false, error: 'The configured base price is invalid.' };
   let optionAdjustments = 0;

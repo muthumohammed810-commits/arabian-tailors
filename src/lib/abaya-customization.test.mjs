@@ -6,12 +6,12 @@ import { publicAbayaProductProjection } from './abaya-size-options.mjs';
 
 test('Abaya customer customization exposes optional model and only standard clothing sizes', () => {
   const steps = [
-    { id: 'abaya-style', title: 'Abaya Style', options: [{ id: 'classic', name: 'Classic' }] },
+    { id: 'abaya-style', title: 'Abaya Style', options: [{ id: 'classic', name: 'Classic', images: ['https://store-test.private.blob.vercel-storage.com/arabian-tailors/abaya-product-images/12345678-1234-1234-1234-123456789abc.jpg'] }] },
     ...['Fabric', 'Color', 'Sleeve', 'Embroidery'].map((title) => ({ id: title.toLowerCase(), title, options: [{ id: 'x', name: 'X' }] })),
     { id: 'abaya-size', title: 'Size', options: ['S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'Custom Measurements'].map((name) => ({ id: name, name })) },
     { id: 'measurements', title: 'Custom Measurements', options: [{ id: 'chest', name: 'Chest' }] },
   ];
-  const visible = getAbayaCustomerSteps(steps);
+  const visible = getAbayaCustomerSteps(steps, 'store-test');
   assert.deepEqual(visible.map((step) => [step.id, step.title]), [['abaya-style', 'Select Abaya Model'], ['color', 'Select Colour'], ['embroidery', 'Embroidery'], ['abaya-size', 'Select Size']]);
   assert.equal(visible[0].required, false);
   assert.equal(visible[0].options[0].name, 'Classic');
@@ -46,7 +46,8 @@ test('public Abaya projection hides measurement and unrelated customization fiel
     { id: 'hidden-style-option', title: 'Stitching Style', options: [{ id: 'hidden-style', name: 'Hidden style', visible: false }] },
     { id: 'visible-custom', title: 'Embroidery Options', options: [{ id: 'visible-embroidery', name: 'Embroidery', available: false, visible: true }] },
   );
-  const projected = publicAbayaProductProjection(product);
+  product.customizationSteps[0].options[0].images = ['https://store-test.private.blob.vercel-storage.com/arabian-tailors/abaya-product-images/12345678-1234-1234-1234-123456789abc.jpg'];
+  const projected = publicAbayaProductProjection(product, 'store-test');
   assert.deepEqual(projected.customizationSteps.map(step => step.id), ['model', 'color', 'size', 'stitching', 'visible-custom']);
   assert.deepEqual(projected.customizationSteps.find(step => step.id === 'stitching').options.map(option => option.id), ['classic']);
   assert.deepEqual(projected.customizationSteps.find(step => step.id === 'visible-custom').options.map(option => option.id), ['visible-embroidery'], 'visible but unavailable entries remain present so the storefront can display them disabled');
