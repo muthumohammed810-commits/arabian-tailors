@@ -439,24 +439,17 @@ body{background:var(--ink);color:var(--ivory);font-family:var(--font-ui),Arial,s
 
 .delivery-history{margin:14px 0;padding:12px 14px;border:1px solid #e9e8e1;border-radius:5px;background:#fbfaf7}.delivery-history summary{cursor:pointer;color:#687052;font-weight:600}.delivery-history ol{margin:10px 0 0;padding-left:20px}.delivery-history li{padding:5px 0;color:#42443d}.delivery-history li span,.delivery-history li small{display:block;color:#85877f;margin-top:3px}
 
-/* Customer-facing luxury garment campaign; photography comes from the saved product galleries. */
-.hero-garment-photo{position:absolute;inset:0;display:block;background-color:#171719;background-size:cover;background-position:center 28%;filter:saturate(.78);transition:filter .65s ease,transform .9s cubic-bezier(.2,.7,.2,1)}
-.hero-garment-photo:after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,rgba(11,11,13,.5),transparent 45%),linear-gradient(90deg,rgba(11,11,13,.15),transparent 60%)}
-.hero-garment:hover .hero-garment-photo{filter:saturate(1);transform:scale(1.035)}
-.luxury-product-showcase{display:grid;grid-template-columns:1fr 1fr;align-items:start;gap:clamp(16px,2.6vw,38px)}
-.luxury-product{min-width:0}
-.luxury-product-abaya{margin-top:clamp(22px,7vw,104px)}
-.luxury-product-image{position:relative;isolation:isolate;display:flex;min-height:560px;height:min(70vw,820px);max-height:820px;overflow:hidden;align-items:flex-end;padding:clamp(22px,4vw,58px);background-color:#1a1a1d;background-size:cover;background-position:center 30%;color:var(--ivory)}
-.luxury-product-image:before{content:"";position:absolute;z-index:-1;inset:0;background:linear-gradient(180deg,rgba(11,11,13,.04) 30%,rgba(11,11,13,.78) 100%);transition:opacity .4s ease}
-.luxury-product-image:after{content:"";position:absolute;z-index:-1;inset:0;background:linear-gradient(135deg,rgba(11,11,13,.16),transparent 54%);transition:opacity .4s ease}
-.luxury-product-image:hover:before{opacity:.82}
-.luxury-product-image:hover{background-size:cover}
-.luxury-product-index{position:absolute;top:clamp(18px,3vw,38px);left:clamp(22px,4vw,58px);font-size:8px;letter-spacing:.2em;color:rgba(245,241,232,.84)}
-.luxury-product-index i{padding:0 8px;color:var(--gold);font-style:normal}
-.luxury-product-title{display:block;font-size:clamp(52px,8vw,112px);line-height:.92;letter-spacing:-.045em;font-weight:400;text-shadow:0 2px 28px rgba(0,0,0,.22)}
-.luxury-product-link{position:absolute;right:clamp(22px,4vw,58px);bottom:clamp(28px,4vw,62px);display:flex;align-items:center;gap:10px;padding-bottom:7px;border-bottom:1px solid rgba(245,241,232,.55);font-size:8px;letter-spacing:.16em;text-transform:uppercase;transition:gap .25s ease,border-color .25s ease}
-.luxury-product-image:hover .luxury-product-link{gap:15px;border-color:var(--gold)}
-.luxury-product-link svg{color:var(--gold)}
-.luxury-product-description{max-width:460px;margin:15px 0 0;color:#aaa69d;font-size:11px;line-height:1.8}
-@media(max-width:700px){.hero-garment-photo{background-position:center 24%}.luxury-product-showcase{grid-template-columns:1fr;gap:27px}.luxury-product-abaya{margin-top:0}.luxury-product-image{height:min(126vw,680px);min-height:470px;padding:25px 22px;background-position:center 28%}.luxury-product-index{left:22px;top:22px;font-size:7px}.luxury-product-title{font-size:clamp(64px,18vw,96px)}.luxury-product-link{right:22px;bottom:31px;font-size:7px}.luxury-product-description{margin:10px 0 0;font-size:10px}}
-@media(prefers-reduced-motion:reduce){.hero-garment-photo,.luxury-product-image:before,.luxury-product-image:after,.luxury-product-link{transition:none}}
+/* Keep the existing collection placement and card structure, with a quieter portrait presentation. */
+.product-rail{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,235px),1fr));justify-content:center;align-items:start;gap:clamp(14px,2vw,24px);overflow:visible;overscroll-behavior:auto;scroll-snap-type:none;padding:0}
+.product-rail:has(>.editorial-card:only-child){grid-template-columns:minmax(0,min(100%,520px))}
+.product-rail:has(>.editorial-card:nth-child(2):last-child){grid-template-columns:repeat(2,minmax(0,1fr));max-width:980px;margin-inline:auto}
+.editorial-card{min-width:0;max-width:none;flex:none;scroll-snap-align:none;border-color:rgba(245,241,232,.08);border-radius:2px}
+.editorial-card:hover,.editorial-card.expanded{border-color:rgba(201,169,110,.42);transform:translateY(-1px)}
+.product-visual{height:auto;aspect-ratio:3/4;background:#242426}
+.product-visual .product-img{height:100%;background-size:cover;background-position:center;filter:saturate(.82)}
+.editorial-card .product-info{padding:15px 13px 13px}
+.product-meta{justify-content:flex-start;color:#aaa69d}
+.editorial-card .product-info h3{font-size:clamp(22px,2.3vw,28px);margin:10px 0 8px}
+.carousel-tools{margin-bottom:12px}
+@media(max-width:700px){.product-rail{grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:14px;margin:0;padding:0}.product-rail:has(>.editorial-card:nth-child(2):last-child){grid-template-columns:1fr;max-width:520px}.editorial-card{max-width:520px;width:100%;justify-self:center}.product-visual{height:auto;aspect-ratio:3/4}.carousel-tools{margin:0 0 12px}}
+@media(prefers-reduced-motion:reduce){.product-visual .product-img,.product-visual-mark{transition:none}}
