@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowRight, BellRing, Check, ChevronDown, CreditCard, LayoutDashboard, Menu, Package, Plus, Search, Settings, Shirt, Users, X, Trash2, Download } from 'lucide-react';
-import { put } from '@vercel/blob/client';
+import { put, uploadPresigned } from '@vercel/blob/client';
 import { productImageBlobAccess, productImageSource } from '@/lib/product-image-url';
 import { deleteMeasurementGuide as deleteMeasurementGuideEntry, isMeasurementGuideVideoUrl, isValidMeasurementGuideList, isValidMeasurementGuideUpload, isValidMeasurementGuideVideoUpload, MEASUREMENT_GUIDE_MAX_IMAGE_BYTES, MEASUREMENT_GUIDE_MAX_VIDEO_BYTES, measurementGuideExtensionForMimeType, measurementGuideImagePath, measurementGuideVideoExtensionForMimeType, measurementGuideVideoPath, moveMeasurementGuide, removeMeasurementGuidePhoto as removeMeasurementGuidePhotoEntry, replaceMeasurementGuidePhoto } from '@/lib/measurement-guides.mjs';
 import { appendOptionPhoto, createUploadProgressActivityReporter, ImageUploadError, saveUploadedPhotoUrl, uploadFilesSequentially, withAbortableDeadline, type DeadlineKind, type UploadFailureStage, type UploadProgressEvent } from '@/lib/upload-batch';
@@ -414,27 +414,35 @@ export default function AdminDashboard(){
    const multipart=file.size>100*1024*1024;
    let stage:UploadFailureStage='token';
     try{return await withAbortableDeadline(async(signal,reportActivity)=>{
-    let tokenResponse:Response;
-     try{tokenResponse=await fetch('/api/admin/product-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'blob.generate-client-token',payload:{pathname,clientPayload:null,multipart}}),cache:'no-store',signal})}
+    let modeResponse:Response;
+     try{modeResponse=await fetch('/api/admin/product-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'blob.get-upload-mode',payload:{pathname}}),cache:'no-store',signal})}
      catch(error){throw new ImageUploadError('token','Could not reach the secure upload authorization API. Check the connection and retry.',{cause:error})}
      reportActivity();
-    if(!tokenResponse.ok){
-     const tokenResult=await tokenResponse.json().catch(()=>null) as {code?:unknown}|null;
-      reportActivity();
-     const statusCode=tokenResponse.status;
-     if(statusCode===401||statusCode===403||tokenResult?.code==='ADMIN_AUTH_REQUIRED')throw new ImageUploadError('authentication','Your admin session expired or is not authorized. Sign in again and retry.',{statusCode});
+    if(!modeResponse.ok){
+     const modeResult=await modeResponse.json().catch(()=>null) as {code?:unknown}|null;
+     const statusCode=modeResponse.status;
+     if(statusCode===401||statusCode===403||modeResult?.code==='ADMIN_AUTH_REQUIRED')throw new ImageUploadError('authentication','Your admin session expired or is not authorized. Sign in again and retry.',{statusCode});
      if(statusCode===503)throw new ImageUploadError('token','Image storage is not configured for this deployment. Contact the site administrator.',{statusCode});
      throw new ImageUploadError('token','The secure upload API rejected the upload request. Retry, or contact the site administrator if it continues.',{statusCode});
     }
-    let tokenData:{clientToken?:unknown};
-    try{tokenData=await tokenResponse.json()}catch(error){throw new ImageUploadError('token','The secure upload API returned an invalid response.',{cause:error})}
-     reportActivity();
-    if(typeof tokenData.clientToken!=='string'||!tokenData.clientToken.startsWith('vercel_blob_client_'))throw new ImageUploadError('token','The secure upload API did not return a valid upload authorization.');
+    const modeData=await modeResponse.json().catch(()=>null) as {mode?:unknown}|null;
+    if(modeData?.mode!=='presigned'&&modeData?.mode!=='legacy')throw new ImageUploadError('token','The secure upload API returned an invalid authorization mode.');
     stage='blob';
     let blob;
     try{
       const reportBlobProgressActivity=createUploadProgressActivityReporter(reportActivity);
-      blob=await put(pathname,file,{access:productImageBlobAccess,token:tokenData.clientToken,contentType:type,multipart,abortSignal:signal,onUploadProgress:event=>{reportBlobProgressActivity(event);if(event.percentage>=100){stage='confirmation';setImageUploadStage('Confirming upload with Vercel Blob…')}else setImageUploadStage('Transferring to Vercel Blob…');if(onProgress)onProgress(event);else setImageUploadProgress(Math.min(99,Math.floor(event.percentage)))}});
+      const onUploadProgress=(event:UploadProgressEvent)=>{reportBlobProgressActivity(event);if(event.percentage>=100){stage='confirmation';setImageUploadStage('Confirming upload with Vercel Blob…')}else setImageUploadStage('Transferring to Vercel Blob…');if(onProgress)onProgress(event);else setImageUploadProgress(Math.min(99,Math.floor(event.percentage)))};
+      if(modeData.mode==='presigned'){
+       blob=await uploadPresigned(pathname,file,{access:productImageBlobAccess,handleUploadUrl:'/api/admin/product-image',contentType:type,multipart,abortSignal:signal,onUploadProgress});
+      }else{
+       const tokenResponse=await fetch('/api/admin/product-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'blob.generate-client-token',payload:{pathname,clientPayload:null,multipart}}),cache:'no-store',signal});
+       reportActivity();
+       if(!tokenResponse.ok){const tokenResult=await tokenResponse.json().catch(()=>null) as {code?:unknown}|null;const statusCode=tokenResponse.status;if(statusCode===401||statusCode===403||tokenResult?.code==='ADMIN_AUTH_REQUIRED')throw new ImageUploadError('authentication','Your admin session expired or is not authorized. Sign in again and retry.',{statusCode});throw new ImageUploadError('token','The secure upload API rejected the upload request. Retry, or contact the site administrator if it continues.',{statusCode});}
+       const tokenData=await tokenResponse.json().catch(()=>null) as {clientToken?:unknown}|null;
+       reportActivity();
+       if(typeof tokenData?.clientToken!=='string'||!tokenData.clientToken.startsWith('vercel_blob_client_'))throw new ImageUploadError('token','The secure upload API did not return a valid upload authorization.');
+       blob=await put(pathname,file,{access:productImageBlobAccess,token:tokenData.clientToken,contentType:type,multipart,abortSignal:signal,onUploadProgress});
+      }
     }catch(error){
       if(signal.aborted)throw error;
      const details=error&&typeof error==='object'?error as {status?:unknown;statusCode?:unknown;code?:unknown}:{};

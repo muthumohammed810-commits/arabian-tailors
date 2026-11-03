@@ -1,4 +1,4 @@
-import { list, get, put, del } from '@vercel/blob';
+import { blobList as list, blobGet as get, blobPut as put, blobDel as del, isBlobStoreConfigured } from '@/lib/blob-auth.mjs';
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/app/admin/guard';
 import { products as catalog } from '@/lib/catalog';
@@ -283,7 +283,7 @@ function setOptionPhotos(option: any, images: string[]) {
 }
 
 export async function GET() {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Shared storage is not connected.' }, 503);
+  if (!isBlobStoreConfigured('shared')) return json({ error: 'Shared storage is not connected.' }, 503);
   try {
     const store = await readStore();
     const migratedCustomization = addDefaultCustomization(store);
@@ -306,7 +306,7 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   if (!await isAdminAuthenticated()) return json({ error: 'Sign in required.' }, 401);
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Shared storage is not connected.' }, 503);
+  if (!isBlobStoreConfigured('shared')) return json({ error: 'Shared storage is not connected.' }, 503);
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'Invalid request.' }, 400);
   try {
@@ -514,8 +514,8 @@ export async function PUT(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    console.error('[store-data] Order persistence unavailable: BLOB_READ_WRITE_TOKEN is not configured', { vercelEnvironment: process.env.VERCEL_ENV || 'unknown' });
+  if (!isBlobStoreConfigured('shared')) {
+    console.error('[store-data] Order persistence unavailable: shared Blob store is not configured', { vercelEnvironment: process.env.VERCEL_ENV || 'unknown' });
     return json({ error: 'Shared storage is not connected.' }, 503);
   }
   const order = await request.json().catch(() => null);

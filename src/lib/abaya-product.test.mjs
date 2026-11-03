@@ -52,14 +52,20 @@ test('Abaya upload paths are scoped and identify files eligible for server size 
   assert.equal(abayaProductImagePath(id, 'image/gif'), null);
 });
 
-test('Abaya media uses only its dedicated token and never falls back to shared storage', () => {
+test('Abaya media uses its explicit store and never falls back to shared storage', () => {
   const path = abayaProductImagePath('0f3dcb4a-a9ae-4b5e-9b1e-94b99355a250', 'image/jpeg');
-  assert.deepEqual(getProductImageBlobStore(path, { BLOB_READ_WRITE_TOKEN: 'shared', ABAYA_BLOB_READ_WRITE_TOKEN: 'abaya', ABAYA_BLOB_STORE_ID: 'abaya-test' }), { kind: 'abaya', token: 'abaya' });
-  assert.deepEqual(getProductImageBlobStore(path, { BLOB_READ_WRITE_TOKEN: 'shared', ABAYA_BLOB_STORE_ID: 'abaya-test' }), { kind: 'abaya', token: null });
-  assert.deepEqual(getProductImageBlobStore(path, { BLOB_READ_WRITE_TOKEN: 'shared', ABAYA_BLOB_READ_WRITE_TOKEN: 'abaya' }), { kind: 'abaya', token: null });
-  assert.deepEqual(getProductImageBlobStore(path, { BLOB_READ_WRITE_TOKEN: 'shared', ABAYA_BLOB_STORE_ID: 'abaya-test', ABAYA_BLOB_WEBHOOK_PUBLIC_KEY: 'webhook-key' }), { kind: 'abaya', token: null });
-  assert.deepEqual(getProductImageBlobStore('arabian-tailors/abaya-product-images/not-a-uuid.jpg', { BLOB_READ_WRITE_TOKEN: 'shared' }), { kind: 'abaya', token: null });
-  assert.deepEqual(getProductImageBlobStore('arabian-tailors/product-images/item.jpg', { BLOB_READ_WRITE_TOKEN: 'shared', ABAYA_BLOB_READ_WRITE_TOKEN: 'abaya', ABAYA_BLOB_STORE_ID: 'abaya-test' }), { kind: 'shared', token: 'shared' });
+  const both = getProductImageBlobStore(path, { BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_sharedtest_sharedsecret', BLOB_STORE_ID: 'store_sharedtest', ABAYA_BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_abatest_abayasecret', ABAYA_BLOB_STORE_ID: 'store_abatest' });
+  assert.deepEqual({ kind: both.kind, token: both.token, storeId: both.storeId }, { kind: 'abaya', token: 'vercel_blob_rw_abatest_abayasecret', storeId: 'store_abatest' });
+  const oidcPreview = getProductImageBlobStore(path, { VERCEL_ENV: 'preview', ABAYA_BLOB_STORE_ID: 'store_vkimfAjFJW0suvFN' });
+  assert.deepEqual({ kind: oidcPreview.kind, token: oidcPreview.token, storeId: oidcPreview.storeId }, { kind: 'abaya', token: null, storeId: 'store_vkimfAjFJW0suvFN' });
+  const noAbayaToken = getProductImageBlobStore(path, { BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_sharedtest_sharedsecret', ABAYA_BLOB_STORE_ID: 'store_abatest' });
+  assert.deepEqual({ kind: noAbayaToken.kind, token: noAbayaToken.token, storeId: noAbayaToken.storeId }, { kind: 'abaya', token: null, storeId: 'store_abatest' });
+  const noAbayaStore = getProductImageBlobStore(path, { BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_sharedtest_sharedsecret', ABAYA_BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_abatest_abayasecret' });
+  assert.deepEqual({ kind: noAbayaStore.kind, token: noAbayaStore.token, storeId: noAbayaStore.storeId }, { kind: 'abaya', token: null, storeId: null });
+  const invalidPath = getProductImageBlobStore('arabian-tailors/abaya-product-images/not-a-uuid.jpg', { BLOB_READ_WRITE_TOKEN: 'shared' });
+  assert.equal(invalidPath.kind, 'abaya');
+  const shared = getProductImageBlobStore('arabian-tailors/product-images/item.jpg', { BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_sharedtest_sharedsecret', BLOB_STORE_ID: 'store_sharedtest', ABAYA_BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_abatest_abayasecret', ABAYA_BLOB_STORE_ID: 'store_abatest' });
+  assert.deepEqual({ kind: shared.kind, token: shared.token, storeId: shared.storeId }, { kind: 'shared', token: 'vercel_blob_rw_sharedtest_sharedsecret', storeId: 'store_sharedtest' });
 });
 
 test('Abaya deletion accepts only namespaced private image paths', () => {

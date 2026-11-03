@@ -1,4 +1,4 @@
-import { get } from '@vercel/blob';
+import { blobGet, blobGetFor, isBlobStoreConfigured } from '@/lib/blob-auth.mjs';
 import { NextRequest, NextResponse } from 'next/server';
 import { isPublicProductImagePath } from '@/lib/product-image-url';
 import { hasPublishedMeasurementGuideImage, hasPublishedMeasurementGuideVideo, isMeasurementGuideImagePath, isMeasurementGuideVideoPath } from '@/lib/measurement-guides.mjs';
@@ -6,14 +6,14 @@ import { isAdminAuthenticated } from '@/app/admin/guard';
 import { ABAYA_PRODUCT_IMAGE_PREFIX, getProductImageBlobStore, isAbayaProductImagePath, isAbayaProductImageUrlForStore } from '@/lib/abaya-product.mjs';
 
 async function isPublishedGuideImage(pathname: string) {
-  const stored = await get('arabian-tailors/store.json', { access: 'private', useCache: false });
+  const stored = await blobGet('arabian-tailors/store.json', { access: 'private', useCache: false });
   if (stored?.statusCode !== 200 || !stored.stream) return false;
   const store = await new Response(stored.stream).json() as { products?: unknown };
   return hasPublishedMeasurementGuideImage(store.products as any[], pathname);
 }
 
 async function isPublishedGuideVideo(pathname: string) {
-  const stored = await get('arabian-tailors/store.json', { access: 'private', useCache: false });
+  const stored = await blobGet('arabian-tailors/store.json', { access: 'private', useCache: false });
   if (stored?.statusCode !== 200 || !stored.stream) return false;
   const store = await new Response(stored.stream).json() as { products?: unknown };
   return hasPublishedMeasurementGuideVideo(store.products as any[], pathname);
@@ -45,13 +45,11 @@ export async function GET(request: NextRequest) {
       }
     }
     const storage = getProductImageBlobStore(pathname);
-    if (storage.kind === 'abaya' && !storage.token) {
-      return new NextResponse('Abaya image storage is not configured', { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    if (!isBlobStoreConfigured(storage.kind)) {
+      const message = storage.kind === 'abaya' ? 'Abaya image storage is not configured' : 'Image storage is not configured';
+      return new NextResponse(message, { status: 503, headers: { 'Cache-Control': 'no-store' } });
     }
-    if (storage.kind === 'shared' && !storage.token) {
-      return new NextResponse('Image storage is not configured', { status: 503, headers: { 'Cache-Control': 'no-store' } });
-    }
-    const result = await get(pathname, { access: 'private', token: storage.token || undefined });
+    const result = await blobGetFor(storage.kind, pathname, { access: 'private', useCache: false });
     if (storage.kind === 'abaya' && !isAbayaProductImageUrlForStore(result?.blob.url, process.env.ABAYA_BLOB_STORE_ID)) {
       return new NextResponse('Image not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
     }

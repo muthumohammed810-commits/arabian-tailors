@@ -1,7 +1,8 @@
-import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
-import { del } from '@vercel/blob';
+import { handleUploadPresigned, handleUpload, type HandleUploadBody, type HandleUploadPresignedBody } from '@vercel/blob/client';
+import { issueSignedToken } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/app/admin/guard';
+import { blobAuthOptions, blobDelFor, getBlobStoreUploadAuth, isBlobStoreConfigured } from '@/lib/blob-auth.mjs';
 import { isMeasurementGuideImagePath, isMeasurementGuideVideoPath, MEASUREMENT_GUIDE_MAX_IMAGE_BYTES, MEASUREMENT_GUIDE_MAX_VIDEO_BYTES, measurementGuideMimeTypeForPath, measurementGuideVideoMimeTypeForPath } from '@/lib/measurement-guides.mjs';
 import { getProductImageBlobStore, isAbayaProductImagePath, ABAYA_PRODUCT_IMAGE_MAX_BYTES } from '@/lib/abaya-product.mjs';
 
@@ -28,7 +29,7 @@ function logUploadFailure(error: unknown, storageKind: 'abaya' | 'shared') {
     errorCode: safe(details.code),
     statusCode: Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? statusCode : undefined,
     storageKind,
-    blobTokenConfigured: Boolean(storageKind === 'abaya' ? process.env.ABAYA_BLOB_READ_WRITE_TOKEN : process.env.BLOB_READ_WRITE_TOKEN),
+    blobStoreConfigured: Boolean(storageKind === 'abaya' ? process.env.ABAYA_BLOB_STORE_ID : process.env.BLOB_STORE_ID),
     vercelEnvironment: process.env.VERCEL_ENV || 'unknown',
   });
 }
@@ -37,54 +38,55 @@ export async function POST(request: Request) {
   if (!await isAdminAuthenticated()) return NextResponse.json({ error: 'Sign in required.', code: 'ADMIN_AUTH_REQUIRED' }, { status: 401, headers: { 'Cache-Control': 'no-store' } });
   let storageKind: 'abaya' | 'shared' = 'shared';
   try {
-    let body: HandleUploadBody;
+    let body: (HandleUploadBody | HandleUploadPresignedBody | { type: 'blob.get-upload-mode'; payload: { pathname: string } });
     try {
-      body = (await request.json()) as HandleUploadBody;
+      body = (await request.json()) as HandleUploadBody | HandleUploadPresignedBody | { type: 'blob.get-upload-mode'; payload: { pathname: string } };
     } catch {
       return NextResponse.json({ error: 'Invalid upload authorization request.', code: 'INVALID_UPLOAD_REQUEST' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
     }
-    const pathname = body.type === 'blob.generate-client-token'
+    const pathname = body.type === 'blob.generate-client-token' || body.type === 'blob.generate-presigned-url'
       ? body.payload.pathname
-      : body.type === 'blob.upload-completed' ? body.payload.blob.pathname : '';
+      : body.type === 'blob.upload-completed' ? body.payload.blob.pathname : body.type === 'blob.get-upload-mode' ? body.payload.pathname : '';
     const storage = getProductImageBlobStore(pathname);
     storageKind = storage.kind === 'abaya' ? 'abaya' : 'shared';
-    if (!storage.token) {
+    const auth = await getBlobStoreUploadAuth(storageKind);
+    if (!auth.ok) {
       const isAbaya = storage.kind === 'abaya';
-      console.error('[admin-product-image] Token request unavailable', { stage: 'token', code: isAbaya ? 'ABAYA_STORAGE_NOT_CONFIGURED' : 'STORAGE_NOT_CONFIGURED', storageKind: storage.kind, vercelEnvironment: process.env.VERCEL_ENV || 'unknown' });
+      console.error('[admin-product-image] Upload authorization unavailable', { stage: 'token', code: isAbaya ? 'ABAYA_STORAGE_NOT_CONFIGURED' : 'STORAGE_NOT_CONFIGURED', reason: auth.reason, storageKind: storage.kind, vercelEnvironment: process.env.VERCEL_ENV || 'unknown' });
       return NextResponse.json({ error: isAbaya ? 'Abaya image storage is not configured.' : 'Shared image storage is not connected.', code: isAbaya ? 'ABAYA_STORAGE_NOT_CONFIGURED' : 'STORAGE_NOT_CONFIGURED' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
     }
-    const response = await handleUpload({
-      token: storage.token,
+    if (body.type === 'blob.get-upload-mode') {
+      if (typeof pathname !== 'string' || !getUploadPolicy(pathname)) return NextResponse.json({ error: 'Invalid image upload path.', code: 'INVALID_UPLOAD_PATH' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
+      return NextResponse.json({ mode: auth.mode === 'oidc' ? 'presigned' : 'legacy' }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    const policyFor = async (pathname: string) => {
+        if (!await isAdminAuthenticated()) throw new UploadTokenError('ADMIN_AUTH_REQUIRED', 401, 'Sign in required.');
+        const policy = getUploadPolicy(pathname);
+        if (!policy) throw new UploadTokenError('INVALID_UPLOAD_PATH', 400, 'Invalid image upload path.');
+        return policy;
+    };
+    let response: unknown;
+    if (auth.mode === 'oidc') {
+      if (body.type !== 'blob.generate-presigned-url' && body.type !== 'blob.upload-completed') return NextResponse.json({ error: 'Preview uploads require the signed URL flow.', code: 'PRESIGNED_UPLOAD_REQUIRED' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
+      response = await handleUploadPresigned({
+        body,
+        request,
+        webhookPublicKey: 'webhookPublicKey' in auth ? auth.webhookPublicKey : undefined,
+        getSignedToken: async (path, _clientPayload, _multipart) => {
+          const policy = await policyFor(path);
+          const token = await issueSignedToken({ ...blobAuthOptions(auth), pathname: path, operations: ['put'], allowedContentTypes: policy.allowedContentTypes, maximumSizeInBytes: policy.maximumSizeInBytes });
+          return { token, urlOptions: { addRandomSuffix: policy.addRandomSuffix, allowOverwrite: policy.allowOverwrite } };
+        },
+      });
+    } else {
+      if (body.type !== 'blob.generate-client-token' && body.type !== 'blob.upload-completed') return NextResponse.json({ error: 'Invalid legacy upload request.', code: 'LEGACY_UPLOAD_REQUIRED' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
+      response = await handleUpload({
+      token: auth.token,
       body,
       request,
-      onBeforeGenerateToken: async (pathname) => {
-        if (!await isAdminAuthenticated()) throw new UploadTokenError('ADMIN_AUTH_REQUIRED', 401, 'Sign in required.');
-        if (isMeasurementGuideVideoPath(pathname)) return {
-          allowedContentTypes: [measurementGuideVideoMimeTypeForPath(pathname)],
-          addRandomSuffix: false,
-          maximumSizeInBytes: MEASUREMENT_GUIDE_MAX_VIDEO_BYTES,
-        };
-        if (isMeasurementGuideImagePath(pathname)) return {
-          allowedContentTypes: [measurementGuideMimeTypeForPath(pathname)],
-          addRandomSuffix: false,
-          maximumSizeInBytes: MEASUREMENT_GUIDE_MAX_IMAGE_BYTES,
-        };
-        if (isAbayaProductImagePath(pathname)) return {
-          allowedContentTypes: ['image/jpeg', 'image/png', 'image/webp'],
-          // The client persists this exact UUID pathname on the product. UUIDs
-          // are unique already, and a suffix would make the saved path differ
-          // from the path allowlisted by the storefront image proxy.
-          addRandomSuffix: false,
-          maximumSizeInBytes: ABAYA_PRODUCT_IMAGE_MAX_BYTES,
-        };
-        if (!/^arabian-tailors\/product-images\/[0-9a-f-]{36}\.(jpg|png|webp|gif)$/.test(pathname)) throw new UploadTokenError('INVALID_UPLOAD_PATH', 400, 'Invalid image upload path.');
-        return {
-          allowedContentTypes: allowedTypes,
-          addRandomSuffix: true,
-          maximumSizeInBytes: 5 * 1024 ** 4,
-        };
-      },
-    });
+      onBeforeGenerateToken: async (path) => policyFor(path),
+      });
+    }
     return NextResponse.json(response, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     logUploadFailure(error, storageKind);
@@ -94,6 +96,37 @@ export async function POST(request: Request) {
     const status = Number.isInteger(upstreamStatus) && upstreamStatus >= 400 && upstreamStatus <= 599 ? upstreamStatus : 502;
     return NextResponse.json({ error: 'The secure image upload could not be authorized.', code: 'TOKEN_GENERATION_FAILED' }, { status, headers: { 'Cache-Control': 'no-store' } });
   }
+}
+
+function getUploadPolicy(pathname: string) {
+  if (isMeasurementGuideVideoPath(pathname)) return {
+          allowedContentTypes: [measurementGuideVideoMimeTypeForPath(pathname)],
+          addRandomSuffix: false,
+          allowOverwrite: false,
+          maximumSizeInBytes: MEASUREMENT_GUIDE_MAX_VIDEO_BYTES,
+        };
+  if (isMeasurementGuideImagePath(pathname)) return {
+          allowedContentTypes: [measurementGuideMimeTypeForPath(pathname)],
+          addRandomSuffix: false,
+          allowOverwrite: false,
+          maximumSizeInBytes: MEASUREMENT_GUIDE_MAX_IMAGE_BYTES,
+        };
+  if (isAbayaProductImagePath(pathname)) return {
+          allowedContentTypes: ['image/jpeg', 'image/png', 'image/webp'],
+          // The client persists this exact UUID pathname on the product. UUIDs
+          // are unique already, and a suffix would make the saved path differ
+          // from the path allowlisted by the storefront image proxy.
+          addRandomSuffix: false,
+          allowOverwrite: false,
+          maximumSizeInBytes: ABAYA_PRODUCT_IMAGE_MAX_BYTES,
+        };
+  if (!/^arabian-tailors\/product-images\/[0-9a-f-]{36}\.(jpg|png|webp|gif)$/.test(pathname)) return null;
+  return {
+          allowedContentTypes: allowedTypes,
+          addRandomSuffix: true,
+          allowOverwrite: false,
+          maximumSizeInBytes: 5 * 1024 ** 4,
+        };
 }
 
 /** Delete only authenticated Abaya media, using only the dedicated Abaya token. */
@@ -113,9 +146,9 @@ export async function DELETE(request: Request) {
   }
   if (!isAbayaProductImagePath(String(pathname || ''))) return NextResponse.json({ error: 'Only Abaya gallery images can be deleted here.', code: 'INVALID_ABAYA_IMAGE_PATH' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
   const storage = getProductImageBlobStore(String(pathname));
-  if (!storage.token) return NextResponse.json({ error: 'Abaya image storage is not configured.', code: 'ABAYA_STORAGE_NOT_CONFIGURED' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+  if (!isBlobStoreConfigured('abaya')) return NextResponse.json({ error: 'Abaya image storage is not configured.', code: 'ABAYA_STORAGE_NOT_CONFIGURED' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
   try {
-    await del(String(pathname), { token: storage.token });
+    await blobDelFor('abaya', String(pathname));
     return NextResponse.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const details = error && typeof error === 'object' ? error as { status?: unknown; statusCode?: unknown; code?: unknown } : {};

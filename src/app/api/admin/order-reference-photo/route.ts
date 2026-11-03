@@ -1,4 +1,4 @@
-import { get, list } from '@vercel/blob';
+import { blobGet as get, blobList as list, isBlobStoreConfigured } from '@/lib/blob-auth.mjs';
 import { NextRequest, NextResponse } from 'next/server';
 import { isGarmentReferencePhotoForOrder, isModelReferenceUrl, isValidOrderReference, referencePhotoFromDesign } from '@/lib/abaya-customization';
 import { isAdminAuthenticated } from '@/app/admin/guard';
@@ -11,7 +11,7 @@ const notFound = () => new NextResponse('Not found', { status: 404, headers: { '
 
 export async function GET(request: NextRequest) {
   if (!await isAdminAuthenticated()) return new NextResponse('Sign in required', { status: 401, headers: { 'Cache-Control': 'private, no-store' } });
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return notFound();
+  if (!isBlobStoreConfigured('shared')) return notFound();
   const orderId = request.nextUrl.searchParams.get('orderId') || '';
   if (!isValidOrderReference(orderId)) return notFound();
 

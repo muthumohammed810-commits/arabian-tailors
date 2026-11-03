@@ -1,4 +1,4 @@
-import { del, get, list, put } from '@vercel/blob';
+import { blobDel as del, blobGet as get, blobList as list, blobPut as put, isBlobStoreConfigured } from '@/lib/blob-auth.mjs';
 import { cert, getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import {
@@ -52,7 +52,7 @@ async function removeStoredDevice(id: string) {
 function firebaseApp(): App | null {
   const webConfig = getFirebaseWebConfiguration(process.env);
   const serviceAccount = parseFirebaseServiceAccount(process.env.FIREBASE_SERVICE_ACCOUNT_JSON, webConfig?.projectId);
-  if (!webConfig || !serviceAccount || !process.env.BLOB_READ_WRITE_TOKEN) return null;
+  if (!webConfig || !serviceAccount || !isBlobStoreConfigured('shared')) return null;
   const existing = getApps().find(app => app.name === 'arabian-tailors-fcm');
   if (existing) return existing;
   return initializeApp({ credential: cert({ projectId: serviceAccount.projectId, clientEmail: serviceAccount.clientEmail, privateKey: serviceAccount.privateKey }) }, 'arabian-tailors-fcm');
@@ -65,7 +65,7 @@ function sendFcm(token: string, data: Record<string, string>) {
 }
 
 export async function getAdminFcmConfiguration() {
-  return { configured: Boolean(firebaseApp()), storageConfigured: Boolean(process.env.BLOB_READ_WRITE_TOKEN) };
+  return { configured: Boolean(firebaseApp()), storageConfigured: isBlobStoreConfigured('shared') };
 }
 
 export async function listAdminFcmDevices() {

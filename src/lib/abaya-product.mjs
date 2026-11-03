@@ -22,10 +22,12 @@ export function isAbayaProductImagePath(pathname) {
 export function getProductImageBlobStore(pathname, env = process.env) {
   const isAbayaNamespace = typeof pathname === 'string' && pathname.startsWith(ABAYA_PRODUCT_IMAGE_PREFIX);
   const kind = isAbayaNamespace ? 'abaya' : 'shared';
+  const storeIdKey = isAbayaNamespace ? 'ABAYA_BLOB_STORE_ID' : 'BLOB_STORE_ID';
   const token = isAbayaNamespace
     ? (typeof env.ABAYA_BLOB_READ_WRITE_TOKEN === 'string' && typeof env.ABAYA_BLOB_STORE_ID === 'string' && env.ABAYA_BLOB_STORE_ID.length ? env.ABAYA_BLOB_READ_WRITE_TOKEN : null)
     : env.BLOB_READ_WRITE_TOKEN;
-  return { kind, token: typeof token === 'string' && token.length ? token : null };
+  const storeId = typeof env[storeIdKey] === 'string' && env[storeIdKey].length ? env[storeIdKey] : null;
+  return { kind, token: typeof token === 'string' && token.length ? token : null, storeId };
 }
 
 /** Accept only an Abaya image pathname or a private Vercel Blob URL for that path. */
