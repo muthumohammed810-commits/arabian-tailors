@@ -14,3 +14,4 @@ export function hasManagedAbayaCatalog(products: readonly unknown[], persistedMa
 export function getCustomerAbayaProducts<T extends AbayaProductRecord>(products: readonly T[], options?: { managed?: boolean; fallbackProducts?: readonly T[] }): T[];
 export function findLegacyAbayaFallback<T extends AbayaProductRecord>(productId: string, products: readonly T[], persistedMarker?: boolean): T | undefined;
 export function getAbayaProductOrderSnapshot(product: AbayaProductRecord): { productId: string; productName: string; productImage: string; basePrice: number } | null;
+export function moveProductWithinCategory<T extends { id: string; category?: string }>(products: readonly T[], category: string, productId: string, direction: -1 | 1): T[];

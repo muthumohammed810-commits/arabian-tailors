@@ -35,3 +35,18 @@ export function getAbayaProductOrderSnapshot(product) {
     basePrice: product.price,
   };
 }
+
+/** Reorder only records in the requested category; mixed catalog entries keep their slots. */
+export function moveProductWithinCategory(products, category, productId, direction) {
+  if (!Array.isArray(products) || ![-1, 1].includes(direction)) return Array.isArray(products) ? [...products] : [];
+  const normalize = (value) => String(value || '').trim().toLowerCase();
+  const categoryIndexes = products.flatMap((product, index) => normalize(product?.category) === normalize(category) ? [index] : []);
+  const position = categoryIndexes.findIndex((index) => products[index]?.id === productId);
+  const targetPosition = position + direction;
+  if (position < 0 || targetPosition < 0 || targetPosition >= categoryIndexes.length) return [...products];
+  const result = [...products];
+  const sourceIndex = categoryIndexes[position];
+  const targetIndex = categoryIndexes[targetPosition];
+  [result[sourceIndex], result[targetIndex]] = [result[targetIndex], result[sourceIndex]];
+  return result;
+}

@@ -4,6 +4,7 @@ import { productImageSource } from './product-image-url.ts';
 import {
   hasPublishedMeasurementGuideImage,
   hasPublishedMeasurementGuideVideo,
+  hasRequiredMeasurementValues,
   isMeasurementGuideImagePath,
   isMeasurementGuideVideoPath,
   isMeasurementGuideVideoUrl,
@@ -58,12 +59,13 @@ test('guide list validation requires safe IDs, title, description, and image for
   assert.equal(isValidMeasurementGuideList([{ ...guide }, { ...guide }], productId), false);
 });
 
-test('customer data and image proxy allow only published Kandura guide photos', () => {
+test('customer data and image proxy allow only published guide photos on managed garments', () => {
   assert.deepEqual(publishedMeasurementGuides([guide, { ...guide, id: 'draft-guide', published: false }], productId), [guide]);
   assert.deepEqual(publishedMeasurementGuides([guide], 'another-kandura'), []);
   assert.equal(hasPublishedMeasurementGuideImage([{ id: productId, category: 'Kandura', measurementGuides: [guide] }], pathname), true);
   assert.equal(hasPublishedMeasurementGuideImage([{ id: productId, category: 'Kandura', measurementGuides: [{ ...guide, published: false }] }], pathname), false);
-  assert.equal(hasPublishedMeasurementGuideImage([{ category: 'Abaya', measurementGuides: [guide] }], pathname), false);
+  assert.equal(hasPublishedMeasurementGuideImage([{ id: productId, category: 'Abaya', measurementGuides: [guide] }], pathname), true);
+  assert.equal(hasPublishedMeasurementGuideImage([{ id: productId, category: 'Fabric', measurementGuides: [guide] }], pathname), false);
 });
 
 test('Admin photo replacement, removal, deletion, and reordering stay attached to the selected guide', () => {
@@ -104,6 +106,24 @@ test('measurement fields accept independent saved photos and public data hides u
   ]);
   assert.equal(hasPublishedMeasurementGuideImage([{ id: productId, category: 'Kandura', measurements: [chest] }], chestPath), true);
   assert.equal(hasPublishedMeasurementGuideImage([{ id: productId, category: 'Kandura', measurementsEnabled: false, measurements: [chest] }], chestPath), false);
+  assert.equal(hasPublishedMeasurementGuideImage([{ id: productId, category: 'Abaya', measurements: [chest] }], chestPath), true);
+  assert.equal(hasPublishedMeasurementGuideImage([{ id: productId, category: 'Abaya', measurementsEnabled: false, measurements: [chest] }], chestPath), false);
+});
+
+test('required measurement submissions are checked against the saved fields without requiring optional values', () => {
+  const fields = [
+    { id: 'chest', name: 'Chest', required: true, available: true },
+    { id: 'sleeve', name: 'Sleeve', required: false, available: true },
+    { id: 'hidden', name: 'Hidden', required: true, available: false },
+  ];
+  assert.equal(hasRequiredMeasurementValues(fields, true, { chest: '42 cm' }), true);
+  assert.equal(hasRequiredMeasurementValues(fields, true, { chest: '   ' }), false);
+  assert.equal(hasRequiredMeasurementValues(fields, true, undefined), false);
+  assert.equal(hasRequiredMeasurementValues(fields, false, undefined), true);
+  assert.equal(hasRequiredMeasurementValues(fields, true, { chest: '42 cm', sleeve: '' }), true);
+  assert.equal(hasRequiredMeasurementValues(fields, true, { chest: '42 cm', hidden: 'not shown' }), false);
+  assert.equal(hasRequiredMeasurementValues(fields, false, { chest: '42 cm' }), false);
+  assert.equal(hasRequiredMeasurementValues(fields, true, { chest: '42 cm', legacyField: 'stale' }), false);
 });
 
 test('the single measurement guide video accepts only MP4/WebM and scoped private Blob URLs', () => {
@@ -126,6 +146,7 @@ test('the single measurement guide video accepts only MP4/WebM and scoped privat
   assert.deepEqual(publishedMeasurementGuideVideo(video, productId), { ...video, published: true });
   assert.equal(publishedMeasurementGuideVideo({ ...video, published: false }, productId), undefined);
   assert.equal(hasPublishedMeasurementGuideVideo([{ id: productId, category: 'Kandura', measurementGuideVideo: video }], videoPath), true);
+  assert.equal(hasPublishedMeasurementGuideVideo([{ id: productId, category: 'Abaya', measurementGuideVideo: video }], videoPath), true);
   assert.equal(hasPublishedMeasurementGuideVideo([{ id: productId, category: 'Kandura', measurementGuideVideo: { ...video, published: false } }], videoPath), false);
   assert.equal(hasPublishedMeasurementGuideVideo([{ id: productId, category: 'Kandura', measurementsEnabled: false, measurementGuideVideo: video }], videoPath), false);
   assert.equal(publishedMeasurementGuideVideo(video, productId, false), undefined);

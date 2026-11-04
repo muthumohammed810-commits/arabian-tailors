@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findLegacyAbayaFallback, getAbayaProductOrderSnapshot, getCustomerAbayaProducts, hasManagedAbayaCatalog, isCustomerEligibleAbayaProduct } from './abaya-product-selection.mjs';
+import { findLegacyAbayaFallback, getAbayaProductOrderSnapshot, getCustomerAbayaProducts, hasManagedAbayaCatalog, isCustomerEligibleAbayaProduct, moveProductWithinCategory } from './abaya-product-selection.mjs';
 
 const published = { id: 'abaya-noor', name: 'Noor Abaya', category: 'Abaya', price: 4200, image: '/noor-main.jpg', images: ['/noor-main.jpg', '/noor-back.jpg'], description: 'Fluid lines', customizationSteps: [{ id: 'size', title: 'Size', options: [{ id: 'm', name: 'M' }] }] };
 
@@ -42,4 +42,19 @@ test('checkout snapshot carries the exact selected product identity, primary upl
   assert.deepEqual(getAbayaProductOrderSnapshot({ ...published, image: '', images: ['/gallery-cover.jpg'] }), {
     productId: 'abaya-noor', productName: 'Noor Abaya', productImage: '/gallery-cover.jpg', basePrice: 4200,
   });
+});
+
+test('Abaya reorder changes only Abaya product order and preserves interleaved product records', () => {
+  const products = [
+    { id: 'abaya-a', category: 'Abaya' },
+    { id: 'kandura-a', category: 'Kandura' },
+    { id: 'abaya-b', category: 'abaya' },
+    { id: 'fabric-a', category: 'Fabric' },
+    { id: 'abaya-c', category: 'Abaya' },
+  ];
+  assert.deepEqual(moveProductWithinCategory(products, 'Abaya', 'abaya-c', -1).map((item) => item.id), [
+    'abaya-a', 'kandura-a', 'abaya-c', 'fabric-a', 'abaya-b',
+  ]);
+  assert.deepEqual(moveProductWithinCategory(products, 'Abaya', 'abaya-a', -1).map((item) => item.id), products.map((item) => item.id));
+  assert.deepEqual(moveProductWithinCategory(products, 'Abaya', 'missing', 1).map((item) => item.id), products.map((item) => item.id));
 });
