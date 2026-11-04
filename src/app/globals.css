@@ -679,3 +679,23 @@ body{background:var(--ink);color:var(--ivory);font-family:var(--font-ui),Arial,s
 .storefront :focus-visible,.customizer-page :focus-visible{outline:2px solid var(--gold);outline-offset:4px}
 @media(min-width:701px) and (max-width:900px){.header-inner,.section-shell,.craft-note{width:calc(100% - 48px)}.editorial-hero{min-height:1040px;height:1040px}.hero-garments{height:37%;max-height:400px;bottom:58px}.hero-actions{max-width:680px}.customizer-shell{width:calc(100% - 48px)}}
 @media(max-width:700px){.editorial-header{height:68px}.header-inner,.section-shell,.craft-note{width:calc(100% - 36px)}.editorial-header .brand{font-size:11px;letter-spacing:.18em}.header-appointment{padding:10px;font-size:8px}.craft-note{align-items:flex-start;flex-direction:column;padding:24px 0}.craft-note>span{text-align:left}.collection-heading{display:block}.collection-heading>p{max-width:420px}.category-strip{gap:22px;margin-right:-18px;padding-right:18px}.collection-bottom{align-items:flex-start;flex-direction:column;gap:12px}.story-image{min-height:350px;height:350px}.story-copy{padding:40px 24px}.story-copy h2{font-size:clamp(45px,13vw,62px)}.process-grid{grid-template-columns:1fr}.process-grid article{padding:20px 4px;border-right:0;border-bottom:1px solid rgba(245,241,232,.14)}.process-grid article:last-child{border-bottom:0}.editorial-footer .section-shell{align-items:flex-start;flex-direction:column}.editorial-footer{padding-bottom:100px}.customizer-shell{width:calc(100% - 30px);padding-top:32px}.customizer-intro{margin-bottom:25px}.customizer-intro h1{font-size:clamp(46px,13vw,64px)}.customizer-progress-labels{overflow-x:auto;padding-bottom:5px}.customizer-progress-labels>span{flex:0 0 auto}.customizer-panel{padding:21px 16px!important}.selected-garment-card{grid-template-columns:1fr;padding:13px}.selected-garment-visual{min-height:280px}.abaya-reference-upload{grid-template-columns:1fr;gap:14px;padding:16px}.abaya-reference-upload>div:first-child,.abaya-reference-preview,.abaya-reference-actions,.abaya-reference-upload>[role=alert]{grid-column:1;grid-row:auto}.abaya-reference-preview{width:min(100%,280px);justify-self:center;max-height:300px}.abaya-reference-actions{align-items:stretch}.abaya-reference-actions .btn{flex:1 1 135px}.abaya-reference-actions [role=status]{text-align:center}.customizer-nav{align-items:stretch}.customizer-nav .btn{padding:12px 10px;font-size:9px}.customizer-footer{align-items:flex-start!important;flex-direction:column}.checkout-price-breakdown,.payment-order-summary,.payment-upi-panel{padding:16px!important}.editorial-hero{height:1040px;min-height:1040px}.hero-garments{height:24%;max-height:250px;bottom:42px}.hero-actions{max-width:350px}.hero-actions .btn{width:min(100%,330px)}}
+
+/* Standalone hero silhouettes: remove only the artwork panels, retaining the SVG garments. */
+.editorial-hero .hero-content{width:min(680px,calc(50% - 52px))}
+.editorial-hero .hero-garments{width:min(50vw,720px)}
+.editorial-hero .hero-garment{animation:garmentFloat 7.6s cubic-bezier(.45,.05,.55,.95) infinite}
+.editorial-hero .hero-garment-abaya{animation-delay:-1.7s}
+.editorial-hero .hero-garment-kandura{animation-delay:-5.1s;margin-left:-7%}
+.editorial-hero .hero-garment .garment-art,
+.editorial-hero .hero-garment .garment-art-abaya,
+.editorial-hero .hero-garment .garment-art-kandura{background:transparent!important}
+.editorial-hero .hero-garment .garment-art:before,
+.editorial-hero .hero-garment .garment-art:after{display:none}
+.editorial-hero .hero-garment .garment-halo,
+.editorial-hero .hero-garment .garment-art-caption{display:none}
+.editorial-hero .hero-garment .garment-art svg{display:block;width:100%;height:100%;max-width:410px;padding:3%;overflow:visible}
+@keyframes garmentFloat{0%,100%{transform:translate3d(-2px,0,0) rotate(-.35deg)}50%{transform:translate3d(2px,-8px,0) rotate(.35deg)}}
+@media(min-width:901px){.editorial-hero .hero-garments{left:auto;right:max(24px,calc((100% - 1440px)/2));width:min(50vw,720px)}}
+@media(min-width:701px) and (max-width:900px){.editorial-hero .hero-content{width:calc(100% - 64px)}.editorial-hero .hero-garments{width:100%;height:37%;max-height:400px}.editorial-hero .hero-garment .garment-art svg{max-width:340px}}
+@media(max-width:700px){.editorial-hero .hero-content{width:calc(100% - 36px)}.editorial-hero .hero-garments{height:24%;max-height:250px;bottom:42px}.editorial-hero .hero-garment .garment-art svg{max-width:250px}}
+@media(prefers-reduced-motion:reduce){.editorial-hero .hero-garment{animation:none!important;transform:none!important}}
