@@ -134,21 +134,25 @@ export default function Home() {
             </div>
           ) : (
             <>
-              <div className="carousel-tools"><span className="carousel-caption">{String(cards.length).padStart(2, '0')} {cards.length === 1 ? 'PIECE' : 'PIECES'}</span></div>
-              <div className="product-rail">
-                {cards.map((card) => <article className={`product-card editorial-card ${expandedCard === card.id ? 'expanded' : ''}`} key={card.id}>
-                  <Link href={card.href} className="product-visual" aria-label={`View ${card.category.toLowerCase() === 'abaya' ? 'Abaya' : card.category.toLowerCase() === 'kandura' ? 'Kandura' : card.name}`}>
-                    {card.garmentKind ? <GarmentVisual kind={card.garmentKind} className="product-garment-visual" /> : card.category.toLowerCase() === 'fabric' ? <div className="product-img fabric-visual" aria-hidden="true" /> : <div className="product-img" style={{ backgroundImage: `url('${productImageSource(card.image)}')` }} />}
-                    {products.find((product) => product.id === card.id)?.available === false && <span className="availability-tag">Unavailable</span>}
-                    <span className="product-visual-mark"><ArrowUpRight size={16}/></span>
-                  </Link>
-                  <div className="product-info">
-                    <div className="product-meta"><span>{card.category}</span></div>
-                    <Link href={card.href}><h3>{card.category.toLowerCase() === 'abaya' ? 'Abaya' : card.category.toLowerCase() === 'kandura' ? 'Kandura' : card.name}</h3></Link>
-                    <button className="card-expand" aria-expanded={expandedCard === card.id} onClick={() => setExpandedCard(expandedCard === card.id ? null : card.id)}>{expandedCard === card.id ? 'Less detail' : 'Discover details'}{expandedCard === card.id ? <Minus size={13}/> : <Plus size={13}/>}</button>
-                    {expandedCard === card.id && <div className="card-detail"><p>{card.description}</p><Link href={card.href}>Explore this piece <ArrowRight size={13}/></Link></div>}
-                  </div>
-                </article>)}
+              <div className="carousel-tools" aria-live="polite"><span className="carousel-caption">{String(cards.length).padStart(2, '0')} {cards.length === 1 ? 'PIECE' : 'PIECES'} <i>—</i> THE ATELIER EDIT</span></div>
+              <div className="product-rail" key={category}>
+                {cards.map((card, index) => {
+                  const title = card.category.toLowerCase() === 'abaya' ? 'Abaya' : card.category.toLowerCase() === 'kandura' ? 'Kandura' : card.name;
+                  const imageUrl = card.image ? productImageSource(card.image) : '';
+                  return <article className={`product-card editorial-card ${expandedCard === card.id ? 'expanded' : ''}`} key={card.id}>
+                    <Link href={card.href} className="product-visual" aria-label={`Explore ${title}`}>
+                      {imageUrl ? <img className="product-img" src={imageUrl} alt={`${title} from the current collection`} loading={index === 0 ? 'eager' : 'lazy'} /> : card.garmentKind ? <GarmentVisual kind={card.garmentKind} className="product-garment-visual" /> : card.category.toLowerCase() === 'fabric' ? <div className="product-img fabric-visual" aria-hidden="true" /> : <div className="product-img" aria-hidden="true" />}
+                      {products.find((product) => product.id === card.id)?.available === false && <span className="availability-tag">Unavailable</span>}
+                      <span className="product-visual-mark"><span>Explore piece</span><ArrowUpRight size={16}/></span>
+                    </Link>
+                    <div className="product-info">
+                      <div className="product-meta"><span>{card.category}</span>{card.garmentKind && <span>Made to measure</span>}</div>
+                      <div className="product-title-row"><Link href={card.href}><h3>{title}</h3></Link><span className="product-index">{String(index + 1).padStart(2, '0')}</span></div>
+                      <button className="card-expand" aria-expanded={expandedCard === card.id} onClick={() => setExpandedCard(expandedCard === card.id ? null : card.id)}>{expandedCard === card.id ? 'Close details' : 'The details'}{expandedCard === card.id ? <Minus size={13}/> : <Plus size={13}/>}</button>
+                      {expandedCard === card.id && <div className="card-detail"><p>{card.description}</p><Link href={card.href}>Begin your selection <ArrowRight size={13}/></Link></div>}
+                    </div>
+                  </article>;
+                })}
                 {!cards.length && <div className="empty-collection">No pieces in this edit yet. <Link href="/customize">Create a custom design <ArrowRight size={14}/></Link></div>}
               </div>
             </>
