@@ -1,5 +1,5 @@
 import { isOfficialIndiaPostPinSource } from './delivery-rule-csv.mjs';
-import { getAbayaCustomerSteps } from './abaya-size-options.mjs';
+import { getAbayaCustomerSteps, isCustomerVisibleOption } from './abaya-size-options.mjs';
 
 /** Fixed shop dispatch location shown in Admin; this is not a courier quote. */
 export const DELIVERY_PICKUP_ORIGIN = 'Parappanangadi, Malappuram, Kerala, India';
@@ -108,29 +108,67 @@ export function quoteFlatDelivery(
   return { status: 'available', ...directoryInfo, ...(coverage?.area && !directoryInfo.area ? { area: coverage.area } : {}), fee: roundedFee, message: roundedFee === 0 ? 'Delivery Fee: FREE' : `Delivery Fee: ₹${roundedFee.toLocaleString('en-IN')}` };
 }
 
-type PriceOption = { id: string; name: string; priceAdjustment?: number; basePrice?: number; available?: boolean; visible?: boolean };
-type PriceStep = { id: string; title: string; required?: boolean; available?: boolean; options: PriceOption[] };
-type PriceProduct = { id: string; name: string; price: number; category?: string; customizationSteps?: PriceStep[] };
+type PriceOption = { id: string; name: string; priceAdjustment?: number; basePrice?: number; available?: boolean; visible?: boolean; stock?: number };
+type PriceStep = { id: string; title: string; required?: boolean; available?: boolean; visible?: boolean; options: PriceOption[] };
+type PriceProduct = { id: string; name: string; price: number; category?: string; options?: string[]; customizationSteps?: PriceStep[] };
 
 /** Calculate the merchandise subtotal from the current stored product configuration. */
 export function calculateConfiguredSubtotal(product: PriceProduct, design: any, fabricProducts: PriceProduct[] = []): { ok: true; subtotal: number; basePrice: number } | { ok: false; error: string } {
   if (!product || !Number.isFinite(product.price) || product.price < 0) return { ok: false, error: 'The configured product price is unavailable.' };
+  const isAbaya = String(product.category || design?.productType || '').toLowerCase() === 'abaya';
+  const configuredProductOptions = Array.isArray(product.options) ? product.options : [];
+  if (isAbaya && design?.productOption !== undefined
+    && (typeof design.productOption !== 'string' || !configuredProductOptions.includes(design.productOption))) {
+    return { ok: false, error: 'The selected product option is unavailable. Refresh your choices.' };
+  }
   const steps = Array.isArray(product.customizationSteps) ? product.customizationSteps : [];
-  const isAbaya = String(design?.productType || product.category || '').toLowerCase() === 'abaya';
   const activeSteps = isAbaya ? getAbayaCustomerSteps(steps) : steps;
+  if (isAbaya && design?.customization !== undefined && !Array.isArray(design.customization)) return { ok: false, error: 'The selected customizations could not be verified. Refresh your choices.' };
   const selections = Array.isArray(design?.customization) ? design.customization : [];
+  const selectionsByStep = new Map<string, any>();
+  for (const selection of selections) {
+    if (isAbaya && (!selection || typeof selection !== 'object' || typeof selection.stepId !== 'string'
+      || selectionsByStep.has(selection.stepId))) {
+      return { ok: false, error: 'A customization was submitted more than once or could not be verified.' };
+    }
+    if (selection && typeof selection === 'object' && typeof selection.stepId === 'string' && !selectionsByStep.has(selection.stepId)) selectionsByStep.set(selection.stepId, selection);
+  }
   const selectedModelId = typeof design?.selectedModel?.id === 'string' ? design.selectedModel.id : '';
   const modelStep = steps.find(step => isAbaya ? /model/i.test(step.title) || /^abaya\s*style$/i.test(step.title.trim()) : /model/i.test(step.title));
   const model = selectedModelId ? modelStep?.options.find(option => option.id === selectedModelId) : undefined;
   // A named model is optional; customers can describe the garment with a private reference photo or proceed without one.
-  if (selectedModelId && !model) return { ok: false, error: 'The selected model is no longer available. Refresh your choices.' };
-  const basePrice = model?.basePrice ?? product.price;
+  if (selectedModelId && (!model || (isAbaya && (modelStep?.available === false || modelStep?.visible === false || !isCustomerVisibleOption(model))))) return { ok: false, error: 'The selected model is no longer available. Refresh your choices.' };
+  if (isAbaya) {
+    const submittedModel = modelStep ? selectionsByStep.get(modelStep.id) : undefined;
+    if ((selectedModelId && submittedModel?.optionId !== selectedModelId) || (!selectedModelId && submittedModel?.optionId)) {
+      return { ok: false, error: 'The selected style does not match the submitted Abaya options.' };
+    }
+  }
+  // Abaya Admin products are the selected model and their saved product price is authoritative.
+  // Legacy Abaya style options remain customization choices; Kandura model base pricing is unchanged.
+  const basePrice = isAbaya ? product.price : model?.basePrice ?? product.price;
   if (!Number.isFinite(basePrice) || basePrice < 0) return { ok: false, error: 'The configured base price is invalid.' };
   let optionAdjustments = 0;
   const verifiedSelections = new Set<string>();
   const selectionKey = (stepId: string, optionId: string) => `${stepId}\u0000${optionId}`;
   const modelConfig = (model as any)?.modelCustomization;
   const categoryForTitle = (title: string) => /colou?r/i.test(title) ? 'colors' : /fabric|cloth/i.test(title) ? 'fabrics' : /stitch/i.test(title) ? 'stitching' : '';
+  const allowedStepIds = new Set(activeSteps.map(step => step.id));
+  if (model) {
+    for (const category of ['colors', 'fabrics', 'stitching'] as const) {
+      const categoryPattern = category === 'colors' ? /colou?r/i : category === 'fabrics' ? /fabric|cloth/i : /stitch/i;
+      const configured = modelConfig?.[category];
+      if (configured && configured.visible !== false && !steps.some(step => categoryPattern.test(step.title))) {
+        allowedStepIds.add(`model-${model.id}-${category}`);
+      }
+    }
+    for (const configured of modelConfig?.steps || []) {
+      if (configured.visible !== false && !steps.some(step => step.id === configured.id)) allowedStepIds.add(configured.id);
+    }
+  }
+  if (isAbaya && [...selectionsByStep.keys()].some(stepId => !allowedStepIds.has(stepId))) {
+    return { ok: false, error: 'A selected customization is not available for this product.' };
+  }
 
   for (const step of activeSteps) {
     const category = categoryForTitle(step.title) as 'colors' | 'fabrics' | 'stitching' | '';
@@ -141,14 +179,14 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
       : categoryConfig
         ? { ...step, options: categoryConfig.options, required: categoryConfig.required ?? step.required, available: categoryConfig.visible !== false }
         : step;
-    if (effectiveStep.available === false) continue;
-    const submitted = selections.find((item: any) => item?.stepId === step.id);
+    if (effectiveStep.available === false || (isAbaya && effectiveStep.visible === false)) continue;
+    const submitted = isAbaya ? selectionsByStep.get(step.id) : selections.find((item: any) => item?.stepId === step.id);
     if (!submitted || !submitted.optionId) {
       if (effectiveStep.required && step.id !== modelStep?.id) return { ok: false, error: `Select an option for ${effectiveStep.title}.` };
       continue;
     }
     const option = effectiveStep.options.find((candidate: PriceOption) => candidate.id === submitted.optionId);
-    if (!option || option.available === false || option.visible === false) return { ok: false, error: `The selected ${effectiveStep.title} option is unavailable. Refresh your choices.` };
+    if (!option || option.available === false || option.visible === false || (isAbaya && option.stock !== undefined && option.stock <= 0)) return { ok: false, error: `The selected ${effectiveStep.title} option is unavailable. Refresh your choices.` };
     if (submitted.option !== option.name || Number(submitted.priceAdjustment || 0) !== Number(option.priceAdjustment || 0)) return { ok: false, error: `The saved price for ${effectiveStep.title} changed. Refresh your choices.` };
     verifiedSelections.add(selectionKey(step.id, option.id));
     optionAdjustments += Number(option.priceAdjustment || 0);
@@ -161,7 +199,7 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
       const categoryPattern = category === 'colors' ? /colou?r/i : category === 'fabrics' ? /fabric|cloth/i : /stitch/i;
       if (steps.some(step => categoryPattern.test(step.title))) continue;
       const stepId = `model-${model.id}-${category}`;
-      const submitted = selections.find((item: any) => item?.stepId === stepId);
+      const submitted = isAbaya ? selectionsByStep.get(stepId) : selections.find((item: any) => item?.stepId === stepId);
       if (!configured || configured.visible === false) continue;
       if (!submitted || !submitted.optionId) {
         if (configured.required) return { ok: false, error: `Select an option for ${category}.` };
@@ -174,7 +212,7 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
     }
     for (const configured of modelConfig?.steps || []) {
       if (configured.visible === false || steps.some(step => step.id === configured.id)) continue;
-      const submitted = selections.find((item: any) => item?.stepId === configured.id);
+      const submitted = isAbaya ? selectionsByStep.get(configured.id) : selections.find((item: any) => item?.stepId === configured.id);
       if (!submitted || !submitted.optionId) {
         if (configured.required) return { ok: false, error: `Select an option for ${configured.title}.` };
         continue;

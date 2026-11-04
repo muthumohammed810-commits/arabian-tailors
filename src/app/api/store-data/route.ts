@@ -17,6 +17,9 @@ import { canReviewPaymentStatus, initialCustomerOrderStatus, isUntrackedDelivery
 import { normalizePaymentStatus, paymentAuditFields, recordPaymentConfirmation } from '@/lib/order-admin.mjs';
 import { listAllBlobPages } from '@/lib/blob-pagination.mjs';
 import { publicStoreSettings } from '@/lib/public-store-settings.mjs';
+import { findLegacyAbayaFallback, hasManagedAbayaCatalog } from '@/lib/abaya-product-selection.mjs';
+import { projectPublicStoreProduct } from '@/lib/public-store-product.mjs';
+import { buildAdminStoreResponse } from '@/lib/admin-store-response.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,8 +28,8 @@ const STORE_FILE = 'arabian-tailors/store.json';
 const ORDER_PREFIX = 'arabian-tailors/orders/';
 const ADMIN_ORDER_BASE_URL = 'https://arabian-tailors.vercel.app';
 const statuses = ['New', 'In production', 'Ready to ship', 'Delivered', 'Cancelled'] as const;
-type Store = { products: any[]; settings: Record<string, any> };
-const defaultStore = (): Store => ({ products: catalog.map(p => ({ ...p, stock: 0, available: true, stitchingType: '', options: [] })), settings: {} });
+type Store = { products: any[]; settings: Record<string, any>; abayaCatalogManaged?: boolean };
+const defaultStore = (): Store => ({ products: catalog.map(p => ({ ...p, stock: 0, available: true, stitchingType: '', options: [] })), settings: {}, abayaCatalogManaged: false });
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 const validText = (value: unknown, max = 500) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
 function logOrderWriteFailure(orderId: string, error: unknown) {
@@ -89,7 +92,7 @@ async function readBlob(pathname: string) {
 async function readStore(): Promise<Store> {
   const stored = await readBlob(STORE_FILE);
   if (!stored || !Array.isArray(stored.products)) return defaultStore();
-  return { products: stored.products, settings: stored.settings && typeof stored.settings === 'object' ? stored.settings : {} };
+  return { products: stored.products, settings: stored.settings && typeof stored.settings === 'object' ? stored.settings : {}, abayaCatalogManaged: stored.abayaCatalogManaged === true };
 }
 async function listOrders() {
   const blobs = await listAllBlobPages((options) => list(options), { prefix: ORDER_PREFIX, limit: 1000 });
@@ -283,16 +286,23 @@ export async function GET() {
       if (migratedCustomization) await saveStore(store);
       const orders = (await listOrders()).map(safePayment);
       const customers = paidOrderCustomerEntries(orders);
-      return json({ ...store, orders, customers, orderSummary: summarizeOrders(orders) });
+      return json(buildAdminStoreResponse(store, orders, customers, summarizeOrders(orders)));
     }
-    const products = store.products.filter(p => p.available !== false).map((product: any) => ({
+    const abayaCatalogManaged = hasManagedAbayaCatalog(store.products, store.abayaCatalogManaged);
+    const publicProducts = store.products.filter(p => p.available !== false).map((product: any) => projectPublicStoreProduct({
       ...product,
       ...(/kandura/i.test(String(product.category || '')) && Array.isArray(product.measurements) ? { measurements: publishedMeasurementFields(product.measurements, product.id, product.measurementsEnabled !== false) } : {}),
       ...(/kandura/i.test(String(product.category || '')) && product.measurementGuideVideo ? { measurementGuideVideo: publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id, product.measurementsEnabled !== false) } : {}),
       ...(/kandura/i.test(String(product.category || '')) && Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
-    }));
+    })).filter(Boolean);
+    // Legacy Abaya choices remain available only before an Admin-managed Abaya catalog exists.
+    if (!abayaCatalogManaged) {
+      const legacyStore = { products: catalog.filter(product => product.category.toLowerCase() === 'abaya').map(product => ({ ...product, stock: 0, available: true, stitchingType: '', options: [] })) };
+      addDefaultCustomization(legacyStore);
+      publicProducts.push(...legacyStore.products.map(projectPublicStoreProduct).filter(Boolean));
+    }
     const storefrontSettings = publicStoreSettings(store.settings);
-    return json({ products, settings: { ...storefrontSettings, deliveryRules: publicDeliveryRules(Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) } });
+    return json({ products: publicProducts, abayaCatalogManaged, settings: { ...storefrontSettings, deliveryRules: publicDeliveryRules(Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) } });
   } catch { return json({ error: 'Could not load store data.' }, 500); }
 }
 
@@ -326,7 +336,11 @@ export async function PUT(request: Request) {
     if (body.resource === 'products') {
       if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.abayaCategory === undefined || typeof p.abayaCategory === 'string' && p.abayaCategory.length <= 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && isValidMeasurementFields(p.measurements, p.id) && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean') && (p.measurementGuideVideo === undefined || isValidMeasurementGuideVideo(p.measurementGuideVideo, p.id)) && (p.measurementGuides === undefined || isValidMeasurementGuideList(p.measurementGuides, p.id)) && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000) && (p.images === undefined || Array.isArray(p.images) && p.images.every((image: any) => typeof image === 'string' && image.length <= 2000)))) return json({ error: 'Invalid product list.' }, 400);
       if (new Set(body.products.map((p: any) => p.id)).size !== body.products.length) return json({ error: 'Product IDs must be unique.' }, 400);
-      const store = await readStore(); store.products = body.products; await saveStore(store); return json({ ok: true, products: store.products });
+      const store = await readStore();
+      const abayaCatalogManaged = hasManagedAbayaCatalog(store.products, store.abayaCatalogManaged) || hasManagedAbayaCatalog(body.products);
+      store.products = body.products;
+      if (abayaCatalogManaged) store.abayaCatalogManaged = true;
+      await saveStore(store); return json({ ok: true, products: store.products });
     }
     if (body.resource === 'measurementGuides') {
       if (body.action !== 'save' || !validText(body.productId, 100) || !isValidMeasurementGuideList(body.guides, body.productId)) return json({ error: 'Invalid Kandura measurement guide configuration.' }, 400);
@@ -500,10 +514,23 @@ export async function POST(request: Request) {
   try {
     const store = await readStore();
     addDefaultCustomization(store);
-    const product = store.products.find((item: any) => item.id === order.productId);
+    let product = store.products.find((item: any) => item.id === order.productId);
+    if (!product && order.design?.productId !== undefined && order.design.productId !== order.productId) return json({ error: 'The selected product does not match the submitted design. Refresh your choices.' }, 400);
+    if (!product && String(order.design?.productType || '').toLowerCase() === 'abaya') {
+      const legacyProduct = findLegacyAbayaFallback(order.productId, catalog, hasManagedAbayaCatalog(store.products, store.abayaCatalogManaged));
+      if (legacyProduct) {
+        const fallbackStore = { products: [{ ...legacyProduct, stock: 0, available: true, stitchingType: '', options: [] }] };
+        addDefaultCustomization(fallbackStore);
+        product = fallbackStore.products[0];
+      }
+    }
     if (!product || product.available === false) return json({ error: 'This product is not currently available. Refresh the page and try again.' }, 409);
+    if (order.productId && order.productName !== product.name) return json({ error: 'The product details changed. Refresh your choices before placing the order.' }, 409);
+    if (order.design?.productId !== undefined && order.design.productId !== product.id) return json({ error: 'The selected product does not match the submitted design. Refresh your choices.' }, 400);
+    if (order.design?.productName !== undefined && order.design.productName !== product.name) return json({ error: 'The product details changed. Refresh your choices before placing the order.' }, 409);
+    if (order.design?.productType !== undefined && String(order.design.productType).toLowerCase() !== String(product.category || '').toLowerCase()) return json({ error: 'The selected product category changed. Refresh your choices before placing the order.' }, 409);
     if (order.design?.customerReferencePhoto !== undefined && !isGarmentReferencePhotoForOrder(order.design, order.id, String(product.category || ''))) return json({ error: 'The customer model reference photo does not match this product category.' }, 400);
-    const pricing = calculateConfiguredSubtotal(product, order.design, store.products.filter((item: any) => String(item.category || '').toLowerCase() === 'fabric'));
+    const pricing = calculateConfiguredSubtotal(product, { ...order.design, productType: product.category }, store.products.filter((item: any) => String(item.category || '').toLowerCase() === 'fabric'));
     if (!pricing.ok) return json({ error: pricing.error }, 400);
     if (Number(order.basePrice) !== pricing.basePrice) return json({ error: 'The product price changed. Refresh your choices before placing the order.' }, 409);
     const deliveryQuote = quoteFlatDelivery(order.delivery.postal, store.settings.deliveryRules || [], store.settings.keralaPinDirectory || null, resolveFlatDeliveryFee(store.settings.flatDeliveryFee), store.settings.restrictDeliveryToConfiguredRules === true);
@@ -516,17 +543,26 @@ export async function POST(request: Request) {
     if (!matchesOrderBreakdown(order, subtotal, deliveryFee, discount)) return json({ error: 'The price breakdown changed. Review the latest delivery fee and total before retrying.' }, 409);
     const isCustomReferenceOrder = Boolean(referencePhotoUrl);
     const customReferenceFields = isCustomReferenceOrder ? createCustomReferenceOrderFields(finalTotal) : {};
+    const savedDesign = order.productId ? {
+      ...order.design,
+      productType: product.category,
+      productId: product.id,
+      productName: product.name,
+      productImage: product.image || product.images?.[0] || '',
+      basePrice: pricing.basePrice,
+      ...(String(product.category || '').toLowerCase() === 'abaya' && order.design?.selectedModel ? { selectedModel: { ...order.design.selectedModel, basePrice: pricing.basePrice } } : {}),
+    } : order.design;
     const clean = {
       id: order.id, customer: order.customer,
       orderType: isCustomReferenceOrder ? CUSTOM_REFERENCE_ORDER_TYPE : 'standard',
       initials: order.initials || order.customer.split(/\s+/).map((part: string) => part[0]).join('').slice(0, 2).toUpperCase(),
       product: order.product,
-      ...(order.productId ? { productId: order.productId, productName: order.productName, productImage: order.productImage || '', basePrice: order.basePrice } : {}),
+      ...(order.productId ? { productId: product.id, productName: product.name, productImage: product.image || product.images?.[0] || '', basePrice: pricing.basePrice } : {}),
       date: order.date || new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
       subtotal, deliveryFee, discount, total: finalTotal, status: initialCustomerOrderStatus(order.status), tone: order.tone || 'sand',
       ...customReferenceFields,
       ...paymentFields,
-      delivery: order.delivery, design: order.design,
+      delivery: order.delivery, design: savedDesign,
       whatsappConsent: {
         customerUpdates: order.whatsappConsent?.customerUpdates === true,
         ...(order.whatsappConsent?.customerUpdates === true ? { capturedAt: new Date().toISOString() } : {}),

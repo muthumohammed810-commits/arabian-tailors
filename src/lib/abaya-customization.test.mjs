@@ -3,7 +3,7 @@ import test from 'node:test';
 import { ABAYA_REFERENCE_MAX_BYTES, ABAYA_REFERENCE_TYPES, getAbayaCustomerSteps, isAbayaReferencePath, isAbayaReferencePhotoForOrder, isAbayaReferenceUrl, isGarmentReferencePhotoForOrder, isModelReferencePath, isModelReferenceUrl, isValidOrderReference, referencePhotoFromDesign, validateAbayaReferenceFile, validateModelReferenceFile } from './abaya-customization.ts';
 import { addDefaultCustomization, customizationDefaults, defaultMeasurements } from './customization-defaults.ts';
 
-test('Abaya customer customization exposes optional model and only standard clothing sizes', () => {
+test('Abaya customer customization preserves all visible configured steps, makes style optional, and limits sizes to standard clothing sizes', () => {
   const steps = [
     { id: 'abaya-style', title: 'Abaya Style', options: [{ id: 'classic', name: 'Classic' }] },
     ...['Fabric', 'Color', 'Sleeve', 'Embroidery'].map((title) => ({ id: title.toLowerCase(), title, options: [{ id: 'x', name: 'X' }] })),
@@ -11,14 +11,26 @@ test('Abaya customer customization exposes optional model and only standard clot
     { id: 'measurements', title: 'Custom Measurements', options: [{ id: 'chest', name: 'Chest' }] },
   ];
   const visible = getAbayaCustomerSteps(steps);
-  assert.deepEqual(visible.map((step) => [step.id, step.title]), [['abaya-style', 'Select Abaya Model'], ['abaya-size', 'Select Size']]);
+  assert.deepEqual(visible.map((step) => [step.id, step.title]), [['abaya-style', 'Choose a style'], ['fabric', 'Fabric'], ['color', 'Color'], ['sleeve', 'Sleeve'], ['embroidery', 'Embroidery'], ['abaya-size', 'Select Size']]);
   assert.equal(visible[0].required, false);
   assert.equal(visible[0].options[0].name, 'Classic');
-  assert.deepEqual(visible[1].options.map((option) => option.name), ['S', 'M', 'L', 'XL', 'XXL']);
+  const sizeStep = visible.find((step) => step.id === 'abaya-size');
+  assert.deepEqual(sizeStep.options.map((option) => option.name), ['S', 'M', 'L', 'XL', 'XXL']);
+  assert.equal(sizeStep.required, undefined);
+  assert.equal(visible.some((step) => step.id === 'measurements'), false);
   assert.deepEqual(getAbayaCustomerSteps([
     { id: 'front-style', title: 'Front Style', options: [{ id: 'open', name: 'Open Front' }] },
     { id: 'size-only', title: 'Size', options: [{ id: 's', name: 'S' }] },
-  ]).map((step) => step.id), ['size-only']);
+  ]).map((step) => step.id), ['front-style', 'size-only']);
+  assert.deepEqual(getAbayaCustomerSteps([
+    { id: 'hidden-step', title: 'Hidden', visible: false, options: [{ id: 'a', name: 'A' }] },
+    { id: 'unavailable-step', title: 'Unavailable', available: false, options: [{ id: 'b', name: 'B' }] },
+    { id: 'visible-step', title: 'Finish', required: true, options: [
+      { id: 'hidden-option', name: 'Hidden', visible: false },
+      { id: 'sold-out', name: 'Sold out', stock: 0 },
+      { id: 'available-option', name: 'Available' },
+    ] },
+  ]), [{ id: 'visible-step', title: 'Finish', required: true, options: [{ id: 'available-option', name: 'Available' }] }]);
 });
 
 test('Abaya defaults contain only optional style and required standard size steps, without measurement fields', () => {
