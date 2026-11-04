@@ -130,6 +130,21 @@ export function isValidMeasurementFields(value, productId) {
   });
 }
 
+/** Validate required customer-entered measurements against saved product fields. */
+export function hasRequiredMeasurementValues(fields, enabled, submitted) {
+  const configuredFields = Array.isArray(fields) ? fields : [];
+  const values = submitted && typeof submitted === 'object' && !Array.isArray(submitted) ? submitted : {};
+  const hasValue = (field) => [values[field.id], values[field.name]]
+    .some((value) => typeof value === 'string' && value.trim().length > 0);
+  const allowedKeys = new Set(['unit', ...configuredFields.flatMap((field) => [field?.id, field?.name]).filter((key) => typeof key === 'string')]);
+  if (Object.entries(values).some(([key, value]) => key !== 'unit' && typeof value === 'string' && value.trim() && !allowedKeys.has(key))) return false;
+  if (!enabled) return !Object.entries(values).some(([key, value]) => key !== 'unit' && typeof value === 'string' && value.trim());
+  if (configuredFields.some((field) => field?.available === false && hasValue(field))) return false;
+  if (configuredFields.some((field) => field?.available !== false && field?.required === true
+    && !(typeof values[field.id] === 'string' && values[field.id].trim().length > 0 && values[field.id].length <= 200))) return false;
+  return true;
+}
+
 export function isValidMeasurementGuideVideo(value, productId) {
   if (value === null || value === undefined) return true;
   if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -213,7 +228,7 @@ export function moveMeasurementGuide(guides, guideId, direction) {
 
 export function hasPublishedMeasurementGuideImage(products, pathname) {
   if (!Array.isArray(products) || !isMeasurementGuideImagePath(pathname)) return false;
-  return products.some((product) => /kandura/i.test(String(product?.category || ''))
+  return products.some((product) => /^(kandura|abaya)$/i.test(String(product?.category || '').trim())
     && ((product.measurementsEnabled !== false && isValidMeasurementFields(product.measurements, product.id)
       && publishedMeasurementFields(product.measurements, product.id).some((field) => {
         try { return decodeURIComponent(new URL(field.photo).pathname.slice(1)) === pathname; }
@@ -227,7 +242,7 @@ export function hasPublishedMeasurementGuideImage(products, pathname) {
 
 export function hasPublishedMeasurementGuideVideo(products, pathname) {
   if (!Array.isArray(products) || !isMeasurementGuideVideoPath(pathname)) return false;
-  return products.some((product) => /kandura/i.test(String(product?.category || ''))
+  return products.some((product) => /^(kandura|abaya)$/i.test(String(product?.category || '').trim())
     && product.measurementsEnabled !== false
     && publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id)
     && (() => {

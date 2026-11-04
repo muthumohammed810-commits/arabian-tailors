@@ -1,1 +1,1 @@
-export function projectPublicStoreProduct(product: unknown): Record<string, unknown> | null;
+export function projectPublicStoreProduct(product: unknown, options?: { managedAbayaCatalog?: boolean }): Record<string, unknown> | null;

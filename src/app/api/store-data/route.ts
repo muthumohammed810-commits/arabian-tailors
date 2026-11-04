@@ -12,7 +12,7 @@ import { isOfficialIndiaPostPinSource, isValidKeralaPinDirectory } from '@/lib/d
 import { createWhatsAppNotificationStates, dispatchWhatsAppNotification, getWhatsAppConfiguration, isE164Phone, sendWhatsAppTemplate, templateParametersForOrder, WHATSAPP_NOTIFICATION_CHANNELS, WHATSAPP_NOTIFICATION_STATES } from '@/lib/whatsapp-order-notifications.mjs';
 import { notifyAdminDevicesOfOrder } from '@/lib/admin-push-server';
 import { persistOrderThenNotifyAdminPush } from '@/lib/admin-push-notifications.mjs';
-import { isValidMeasurementFields, isValidMeasurementGuideList, isValidMeasurementGuideVideo, publishedMeasurementFields, publishedMeasurementGuideVideo, publishedMeasurementGuides } from '@/lib/measurement-guides.mjs';
+import { hasRequiredMeasurementValues, isValidMeasurementFields, isValidMeasurementGuideList, isValidMeasurementGuideVideo, publishedMeasurementFields, publishedMeasurementGuideVideo, publishedMeasurementGuides } from '@/lib/measurement-guides.mjs';
 import { canReviewPaymentStatus, initialCustomerOrderStatus, isUntrackedDeliveryStatusTransition, paidOrderCustomerEntries, summarizeOrders, updateDeliveryStatus } from '@/lib/order-admin.mjs';
 import { normalizePaymentStatus, paymentAuditFields, recordPaymentConfirmation } from '@/lib/order-admin.mjs';
 import { listAllBlobPages } from '@/lib/blob-pagination.mjs';
@@ -291,15 +291,15 @@ export async function GET() {
     const abayaCatalogManaged = hasManagedAbayaCatalog(store.products, store.abayaCatalogManaged);
     const publicProducts = store.products.filter(p => p.available !== false).map((product: any) => projectPublicStoreProduct({
       ...product,
-      ...(/kandura/i.test(String(product.category || '')) && Array.isArray(product.measurements) ? { measurements: publishedMeasurementFields(product.measurements, product.id, product.measurementsEnabled !== false) } : {}),
-      ...(/kandura/i.test(String(product.category || '')) && product.measurementGuideVideo ? { measurementGuideVideo: publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id, product.measurementsEnabled !== false) } : {}),
-      ...(/kandura/i.test(String(product.category || '')) && Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
-    })).filter(Boolean);
+      ...(/^(kandura|abaya)$/i.test(String(product.category || '').trim()) && Array.isArray(product.measurements) ? { measurements: publishedMeasurementFields(product.measurements, product.id, product.measurementsEnabled !== false).filter((field: any) => !/^abaya$/i.test(String(product.category || '').trim()) || field.available !== false) } : {}),
+      ...(/^(kandura|abaya)$/i.test(String(product.category || '').trim()) && product.measurementGuideVideo ? { measurementGuideVideo: publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id, product.measurementsEnabled !== false) } : {}),
+      ...(/^(kandura|abaya)$/i.test(String(product.category || '').trim()) && Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
+    }, { managedAbayaCatalog: abayaCatalogManaged })).filter(Boolean);
     // Legacy Abaya choices remain available only before an Admin-managed Abaya catalog exists.
     if (!abayaCatalogManaged) {
       const legacyStore = { products: catalog.filter(product => product.category.toLowerCase() === 'abaya').map(product => ({ ...product, stock: 0, available: true, stitchingType: '', options: [] })) };
       addDefaultCustomization(legacyStore);
-      publicProducts.push(...legacyStore.products.map(projectPublicStoreProduct).filter(Boolean));
+      publicProducts.push(...legacyStore.products.map((product) => projectPublicStoreProduct(product)).filter(Boolean));
     }
     const storefrontSettings = publicStoreSettings(store.settings);
     return json({ products: publicProducts, abayaCatalogManaged, settings: { ...storefrontSettings, deliveryRules: publicDeliveryRules(Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) } });
@@ -343,10 +343,10 @@ export async function PUT(request: Request) {
       await saveStore(store); return json({ ok: true, products: store.products });
     }
     if (body.resource === 'measurementGuides') {
-      if (body.action !== 'save' || !validText(body.productId, 100) || !isValidMeasurementGuideList(body.guides, body.productId)) return json({ error: 'Invalid Kandura measurement guide configuration.' }, 400);
+      if (body.action !== 'save' || !validText(body.productId, 100) || !isValidMeasurementGuideList(body.guides, body.productId)) return json({ error: 'Invalid product measurement guide configuration.' }, 400);
       const store = await readStore();
       const product = store.products.find((item: any) => item.id === body.productId);
-      if (!product || !/kandura/i.test(String(product.category || ''))) return json({ error: 'Kandura product not found.' }, 404);
+      if (!product || !/^(kandura|abaya)$/i.test(String(product.category || '').trim())) return json({ error: 'Kandura or Abaya product not found.' }, 404);
       product.measurementGuides = body.guides;
       await saveStore(store);
       return json({ ok: true, productId: product.id, measurementGuides: product.measurementGuides });
@@ -357,11 +357,11 @@ export async function PUT(request: Request) {
       if (body.action !== 'save' || !validText(body.productId, 100) || (!hasFields && !hasVideo)
         || (hasFields && !isValidMeasurementFields(body.measurements, body.productId))
         || (hasVideo && !isValidMeasurementGuideVideo(body.measurementGuideVideo, body.productId))) {
-        return json({ error: 'Invalid Kandura measurement media configuration.' }, 400);
+        return json({ error: 'Invalid product measurement media configuration.' }, 400);
       }
       const store = await readStore();
       const product = store.products.find((item: any) => item.id === body.productId);
-      if (!product || !/kandura/i.test(String(product.category || ''))) return json({ error: 'Kandura product not found.' }, 404);
+      if (!product || !/^(kandura|abaya)$/i.test(String(product.category || '').trim())) return json({ error: 'Kandura or Abaya product not found.' }, 404);
       if (hasFields) product.measurements = body.measurements;
       if (hasVideo) product.measurementGuideVideo = body.measurementGuideVideo || undefined;
       await saveStore(store);
@@ -530,6 +530,8 @@ export async function POST(request: Request) {
     if (order.design?.productName !== undefined && order.design.productName !== product.name) return json({ error: 'The product details changed. Refresh your choices before placing the order.' }, 409);
     if (order.design?.productType !== undefined && String(order.design.productType).toLowerCase() !== String(product.category || '').toLowerCase()) return json({ error: 'The selected product category changed. Refresh your choices before placing the order.' }, 409);
     if (order.design?.customerReferencePhoto !== undefined && !isGarmentReferencePhotoForOrder(order.design, order.id, String(product.category || ''))) return json({ error: 'The customer model reference photo does not match this product category.' }, 400);
+    if (/^abaya$/i.test(String(product.category || '').trim())
+      && !hasRequiredMeasurementValues(product.measurements, product.measurementsEnabled !== false, order.design?.measurements)) return json({ error: 'Complete all required Abaya measurements and remove values from hidden fields before placing the order.' }, 400);
     const pricing = calculateConfiguredSubtotal(product, { ...order.design, productType: product.category }, store.products.filter((item: any) => String(item.category || '').toLowerCase() === 'fabric'));
     if (!pricing.ok) return json({ error: pricing.error }, 400);
     if (Number(order.basePrice) !== pricing.basePrice) return json({ error: 'The product price changed. Refresh your choices before placing the order.' }, 409);

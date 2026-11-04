@@ -71,3 +71,54 @@ test('public Kandura projection retains the customer measurement and published g
 test('invalid products are not projected', () => {
   assert.equal(projectPublicStoreProduct(null), null);
 });
+
+test('managed Abaya catalog does not expose the seeded static style list but keeps explicitly configured style options', () => {
+  const product = {
+    id: 'abaya-managed', name: 'Managed Abaya', category: 'Abaya', price: 5000,
+    customizationSteps: [
+      { id: 'legacy-style', title: 'Abaya Style', required: false, options: [
+        { id: 'classic', name: 'Classic' }, { id: 'open-front', name: 'Open Front' },
+      ] },
+      { id: 'custom-style', title: 'Personalized silhouette', required: false, options: [
+        { id: 'evening', name: 'Evening silhouette', priceAdjustment: 250 },
+      ] },
+      { id: 'size', title: 'Size', required: true, options: [{ id: 'm', name: 'M' }] },
+    ],
+  };
+  const managed = projectPublicStoreProduct(product, { managedAbayaCatalog: true });
+  assert.deepEqual(managed.customizationSteps.map((step) => step.id), ['custom-style', 'size']);
+  assert.deepEqual(managed.customizationSteps[0].options.map((option) => option.id), ['evening']);
+  const legacy = projectPublicStoreProduct(product);
+  assert.equal(legacy.customizationSteps.some((step) => step.id === 'legacy-style'), true);
+});
+
+test('public Abaya projection includes only enabled customer-facing measurement fields and published guide media', () => {
+  const id = 'abaya-with-measurements';
+  const fieldPhoto = `https://store.private.blob.vercel-storage.com/arabian-tailors/measurement-guides/${id}/chest/123e4567-e89b-12d3-a456-426614174000.jpg`;
+  const guidePhoto = `https://store.private.blob.vercel-storage.com/arabian-tailors/measurement-guides/${id}/guide-1/123e4567-e89b-12d3-a456-426614174000.webp`;
+  const video = `https://store.private.blob.vercel-storage.com/arabian-tailors/measurement-guides/${id}/video/123e4567-e89b-12d3-a456-426614174000.mp4`;
+  const product = projectPublicStoreProduct({
+    id, name: 'Measured Abaya', category: 'Abaya', price: 4000, measurementsEnabled: true,
+    measurements: [
+      { id: 'chest', name: 'Chest', unit: 'cm', required: true, available: true, photo: fieldPhoto, photoPublished: true },
+      { id: 'draft', name: 'Draft', unit: 'cm', available: true, photo: guidePhoto, photoPublished: false },
+      { id: 'hidden', name: 'Hidden', unit: 'cm', available: false },
+    ],
+    measurementGuides: [
+      { id: 'guide-1', title: 'Chest reference', instructions: 'Measure across the chest.', image: guidePhoto, published: true },
+      { id: 'draft-guide', title: 'Private guide', instructions: '', image: guidePhoto, published: false },
+    ],
+    measurementGuideVideo: { url: video, instructions: 'Watch first.', published: true },
+    adminNotes: 'never public',
+  });
+  assert.equal(product.measurementsEnabled, undefined);
+  assert.deepEqual(product.measurements.map((field) => field.id), ['chest', 'draft']);
+  assert.equal(product.measurements[0].photo, fieldPhoto);
+  assert.equal(product.measurements[1].photo, undefined, 'unpublished measurement photos stay private while visible fields remain available');
+  assert.deepEqual(product.measurementGuides.map((guide) => guide.id), ['guide-1']);
+  assert.equal(product.measurementGuideVideo.url, video);
+  assert.equal(product.adminNotes, undefined);
+  const hidden = projectPublicStoreProduct({ id, name: 'Measured Abaya', category: 'Abaya', price: 4000, measurementsEnabled: false, measurements: [{ id: 'chest', name: 'Chest', unit: 'cm', required: true }] });
+  assert.equal(hidden.measurements, undefined);
+  assert.equal(hidden.measurementsEnabled, undefined);
+});

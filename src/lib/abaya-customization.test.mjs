@@ -33,6 +33,18 @@ test('Abaya customer customization preserves all visible configured steps, makes
   ]), [{ id: 'visible-step', title: 'Finish', required: true, options: [{ id: 'available-option', name: 'Available' }] }]);
 });
 
+test('managed Abaya products omit the seeded legacy style list while preserving intentionally configured customer choices', () => {
+  const steps = [
+    { id: 'seeded-style', title: 'Abaya Style', required: false, options: customizationDefaults.abaya[0].options.map((option, index) => ({ id: `legacy-${index}`, ...option })) },
+    { id: 'custom-style', title: 'Personalized silhouette', required: false, options: [{ id: 'evening', name: 'Evening silhouette' }] },
+    { id: 'size', title: 'Size', required: true, options: [{ id: 'm', name: 'M' }] },
+  ];
+  const visible = getAbayaCustomerSteps(steps, { managedCatalog: true });
+  assert.deepEqual(visible.map((step) => step.id), ['custom-style', 'size']);
+  assert.equal(visible[0].options[0].name, 'Evening silhouette');
+  assert.equal(getAbayaCustomerSteps(steps).some((step) => step.id === 'seeded-style'), true, 'legacy fallback remains unchanged without a managed catalog');
+});
+
 test('Abaya defaults contain only optional style and required standard size steps, without measurement fields', () => {
   assert.deepEqual(customizationDefaults.abaya.map((step) => step.title), ['Abaya Style', 'Size']);
   assert.deepEqual(customizationDefaults.abaya[1].options.map((option) => option.name), ['S', 'M', 'L', 'XL', 'XXL']);
