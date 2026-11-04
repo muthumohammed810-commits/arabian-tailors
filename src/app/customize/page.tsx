@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, ShieldCheck, Scissors, Smartphone, LockKeyhole } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Copy, ShieldCheck, Scissors, Smartphone, LockKeyhole } from 'lucide-react';
 import { fabrics as defaultFabrics, products as defaultProducts, styles as defaultStyles, type Product } from '@/lib/catalog';
 import { GarmentVisual } from '@/components/garment-visual';
 import { createUpiPaymentUrl } from '@/lib/upi-payment';
@@ -92,6 +92,9 @@ export default function Customize() {
   const [postal, setPostal] = useState('');
   const [orderId, setOrderId] = useState('');
   const [upiFallback, setUpiFallback] = useState(false);
+  const [paymentAppRequested, setPaymentAppRequested] = useState(false);
+  const [orderReferenceCopied, setOrderReferenceCopied] = useState(false);
+  const [orderReferenceCopyError, setOrderReferenceCopyError] = useState('');
   const [paySettings, setPaySettings] = useState<Record<string, any>>({});
   const [serviceStyles, setServiceStyles] = useState<TailoringStyle[]>(defaultStyles);
   const [serviceFabrics, setServiceFabrics] = useState<Fabric[]>(defaultFabrics);
@@ -302,6 +305,7 @@ export default function Customize() {
     const upiId = typeof paySettings.upiId === 'string' ? paySettings.upiId : '';
     const paymentUrl = amount === null ? null : createUpiPaymentUrl(upiId, amount, orderRef);
     if (!paymentUrl) { setUpiFallback(true); return; }
+    setPaymentAppRequested(true);
 
     let fallbackTimer: number;
     const showFallback = () => {
@@ -318,6 +322,18 @@ export default function Customize() {
     document.addEventListener('visibilitychange', handleVisibility);
     fallbackTimer = window.setTimeout(() => { if (document.visibilityState === 'visible') showFallback(); }, 2200);
     try { window.location.assign(paymentUrl); } catch { showFallback(); }
+  }
+
+  async function copyOrderReference() {
+    try {
+      await navigator.clipboard.writeText(orderId);
+      setOrderReferenceCopied(true);
+      setOrderReferenceCopyError('');
+      window.setTimeout(() => setOrderReferenceCopied(false), 2200);
+    } catch {
+      setOrderReferenceCopied(false);
+      setOrderReferenceCopyError('Copy is unavailable here. Select the order reference and copy it manually.');
+    }
   }
 
   async function placeOrder() {
@@ -534,18 +550,39 @@ export default function Customize() {
             </>}
 
             {step === paymentStep && orderId && <>
-              <h2 className="serif customizer-step-title">Complete payment with UPI</h2>
-              <p className="subtle">Your order is saved. Payment status · <b>{paymentStatus}</b>. Use the shop’s configured UPI details below. Returning from an app does not confirm payment.</p>
+              <section className="order-confirmation" aria-labelledby="order-confirmation-title">
+                <div className="confirmation-heading">
+                  <span className="confirmation-icon"><CheckCircle2 size={21}/></span>
+                  <div><span className="eyebrow">ORDER SAVED · ARABIAN TAILORS</span><h2 id="order-confirmation-title" className="serif">Your order is in good hands.</h2><p>Your order has been received by the atelier. Keep this reference for any questions.</p></div>
+                </div>
+                <div className="confirmation-reference">
+                  <div><span className="eyebrow">YOUR ORDER REFERENCE</span><strong>{orderId}</strong></div>
+                  <button type="button" className="confirmation-copy" onClick={() => void copyOrderReference()} aria-label={orderReferenceCopied ? 'Order reference copied' : 'Copy order reference'}>{orderReferenceCopied ? <Check size={15}/> : <Copy size={15}/>}<span>{orderReferenceCopied ? 'Copied' : 'Copy reference'}</span></button>
+                </div>
+                {orderReferenceCopyError && <p className="confirmation-copy-error" role="status">{orderReferenceCopyError}</p>}
+                <div className="confirmation-statuses" aria-label="Order and payment status">
+                  <div className="confirmation-status is-complete"><span>01</span><div><b>Order saved</b><small>Confirmed by the atelier system</small></div><Check size={15}/></div>
+                  <div className={`confirmation-status ${paymentAppRequested ? 'is-active' : paymentStatus === 'Paid' ? 'is-complete' : ''}`}><span>02</span><div><b>{paymentAppRequested ? 'Payment initiated' : paymentStatus === 'Paid' ? 'Payment verified' : 'Payment not started'}</b><small>{paymentAppRequested ? 'UPI app was opened or requested' : paymentStatus === 'Paid' ? 'Receipt confirmed by the atelier' : 'Choose UPI below when you are ready'}</small></div>{paymentStatus === 'Paid' && <Check size={15}/>}</div>
+                  <div className={`confirmation-status ${paymentStatus === 'Paid' ? 'is-complete' : paymentStatus === 'Pending verification' ? 'is-pending' : 'is-active'}`}><span>03</span><div><b>{paymentStatus === 'Paid' ? 'Verified by atelier' : paymentStatus === 'Pending verification' ? 'Payment pending verification' : `Payment ${paymentStatus.toLowerCase()}`}</b><small>{paymentStatus === 'Paid' ? 'The atelier confirmed receipt' : paymentStatus === 'Pending verification' ? 'Only the atelier can confirm receipt' : 'Current status returned by the order service'}</small></div>{paymentStatus === 'Paid' ? <Check size={15}/> : paymentStatus === 'Pending verification' ? <span className="confirmation-pending-badge">PENDING</span> : <span className="confirmation-pending-badge">{paymentStatus.toUpperCase()}</span>}</div>
+                </div>
+                <div className="confirmation-delivery">
+                  <div className="eyebrow">DELIVERY DETAILS</div>
+                  <strong>{name}</strong><span>{address}</span><span>{city} · {postal}</span><span>{phone}</span><span>{email}</span>
+                </div>
+                <p className="confirmation-next-step">Next: complete the UPI payment below, then allow the atelier to verify the receipt. Opening or returning from a UPI app does not mark an order as paid.</p>
+              </section>
+              <h2 className="serif customizer-step-title confirmation-payment-title">Complete payment with UPI</h2>
+              <p className="subtle">Use the shop’s configured UPI ID, QR code or UPI app link. The payment status stays pending until the atelier verifies the receipt.</p>
               <section className="payment-order-summary">
                 <div className="eyebrow">Order summary · {isCustomReferenceOrder ? 'Custom Reference Photo Order' : selectedProduct?.category || 'Kandura'}</div>
                 <div className="payment-order-product"><span>{selectedProduct?.name || configuredProduct?.name || `${currentStyle.name} Kandura`}</span><b>₹{basePrice.toLocaleString('en-IN')}</b></div>
+                {activeProductOption && <div className="subtle">Product option · {activeProductOption}</div>}
                 {selectedModelOption && <div className="subtle">Model · {selectedModelOption.name}</div>}
                 {customSteps.filter(item => customSelections[item.id]).map(item => <div className="subtle" key={item.id}>{item.title} · {customSelections[item.id].name}{customSelections[item.id].priceAdjustment ? ` · ${customSelections[item.id].priceAdjustment! > 0 ? '+' : '−'}₹${Math.abs(customSelections[item.id].priceAdjustment!).toLocaleString('en-IN')}` : ''}</div>)}
                 {hasGarmentDefaults && <><div className="subtle">Fabric · {currentFabric.name} · Colour · {color}</div><div className="subtle">Fit · {sizing === 'standard' ? `Standard · ${size}` : `Custom measurements (${unit})`} · {speed === 'normal' ? 'Standard production' : 'Priority production'}</div></>}
                 {Object.entries(measurements).filter(([, value]) => value.trim()).map(([key, value]) => <div className="subtle" key={key}>Measurement · {key} {value} {unit}</div>)}
                 {isCustomReferenceOrder ? <><div className="checkout-price-row"><span>Estimated order price · not final</span><b>₹{(confirmedEstimate??total).toLocaleString('en-IN')}</b></div>{confirmedFinalPrice!==null&&<div className="checkout-price-row"><span>Admin-confirmed final order total</span><b>₹{confirmedFinalPrice.toLocaleString('en-IN')}</b></div>}<div className="payment-order-total"><span>UPI advance due · {confirmedAdvanceStatus}</span><b className="gold">₹{(confirmedPaymentAmount??500).toLocaleString('en-IN')}</b></div>{confirmedRemainingBalance!==null&&<div className="payment-order-total"><span>Remaining balance · advance verified</span><b>₹{confirmedRemainingBalance.toLocaleString('en-IN')}</b></div>}<div className="custom-reference-notice"><p>{confirmedFinalPrice!==null?'The final order total has been confirmed by ARABIAN TAILORS.':'ARABIAN TAILORS will review your design and confirm the final price and remaining balance through WhatsApp.'}</p>{orderId && <small>Custom Reference Photo Order · {orderId}</small>}</div></> : <><div className="checkout-price-row"><span>Product price</span><b>₹{basePrice.toLocaleString('en-IN')}</b></div><div className="checkout-price-row"><span>Customization charges</span><b>{customizationCharges<0?'− ':''}₹{Math.abs(customizationCharges).toLocaleString('en-IN')}</b></div><div className="checkout-price-row checkout-delivery-row"><span>Delivery Fee · flat shop rate</span><b>{confirmedBreakdown?(confirmedBreakdown.deliveryFee===0?'FREE':`₹${confirmedBreakdown.deliveryFee.toLocaleString('en-IN')}`):deliveryQuote.status==='available'?(deliveryQuote.fee===0?'FREE':`₹${deliveryQuote.fee.toLocaleString('en-IN')}`):'Needs confirmation'}</b></div><div className="checkout-price-row"><span>Discount</span><b>₹{(confirmedBreakdown?.discount??0).toLocaleString('en-IN')}</b></div><div className="payment-order-total"><span>Final Total · Amount to pay</span><b className="gold">₹{(confirmedBreakdown?.total??confirmedTotal??finalTotal??total).toLocaleString('en-IN')}</b></div><small className="subtle">The same shop-configured flat delivery charge applies to Abaya and Kandura; it is not an official DTDC quote.</small></>}
-                <div className="subtle">Order reference · <b>{orderId}</b></div>
-                <small className="subtle">Final tailoring price remains subject to atelier confirmation.</small>
+                <small className="subtle">{isCustomReferenceOrder ? 'The advance is ₹500. The atelier will review your reference and confirm the final tailoring price.' : 'The order total above is confirmed by the server. Final tailoring details remain subject to atelier review.'}</small>
               </section>
               <section className="payment-upi-panel">
                 <div className="payment-upi-title"><Smartphone size={20} className="gold"/><div><div className="eyebrow">UPI only</div><b>Google Pay · PhonePe · Paytm · any UPI app</b></div></div>
@@ -554,6 +591,7 @@ export default function Customize() {
                   {paySettings.qr && <div className="payment-qr payment-qr-checkout"><div className="eyebrow">Shop UPI QR code</div><img src={paySettings.qr} alt="Shop UPI QR code"/><p className="subtle">Scan using another device. {isCustomReferenceOrder?'Enter exactly ₹500 as the advance and use the order reference in the payment note.':'Use the order reference above in the payment note if your app permits.'}</p></div>}
                   {paySettings.upiId && <button type="button" className="btn" onClick={() => openUpiApp(orderId, confirmedPaymentAmount)}>{isCustomReferenceOrder ? `Pay ₹${(confirmedPaymentAmount??500).toLocaleString('en-IN')} advance with UPI` : 'Open Google Pay / Pay with UPI'} <ArrowRight size={14}/></button>}
                   {upiFallback && <p role="status" className="subtle">The UPI app did not open. Use the merchant UPI ID or scan the QR above. You can retry without creating another order.</p>}
+                  {paymentAppRequested && <p role="status" className="confirmation-payment-pending">Payment app opened or requested. Your payment is still <b>PENDING</b> until the atelier verifies the receipt.</p>}
                   <p className="subtle">The shop must confirm receipt in its merchant UPI app before Admin marks the order paid. Returning from a payment app never marks it paid.</p>
                 </> : <p role="status" className="subtle">The saved order is {paymentStatus.toLowerCase()}. This page will not open another payment request. Contact the atelier if you need help.</p>}
               </section>
