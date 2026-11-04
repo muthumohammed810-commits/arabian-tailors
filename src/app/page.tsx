@@ -17,7 +17,7 @@ function toCard(product: StoreProduct): Card {
   return {
     id: product.id, name: product.name, category: product.category,
     image: product.images?.[0] || product.image, description: product.description,
-    href: category === 'kandura' || category === 'abaya' || product.customizationSteps?.length ? `/customize?product=${encodeURIComponent(product.id)}` : '#collection',
+    href: category === 'kandura' || category === 'abaya' || product.customizationSteps?.length ? `/customize?product=${encodeURIComponent(product.id)}${category === 'abaya' ? '&productType=Abaya' : ''}` : '#collection',
     garmentKind: category === 'abaya' ? 'abaya' : category === 'kandura' ? 'kandura' : undefined,
   };
 }
@@ -67,7 +67,7 @@ export default function Home() {
     return products.map(toCard);
   }, [category, products]);
   const featuredAbaya = products.find((product) => product.available !== false && product.category.toLowerCase() === 'abaya') || catalogProducts.find((product) => product.category.toLowerCase() === 'abaya');
-  const abayaHref = featuredAbaya ? `/customize?product=${encodeURIComponent(featuredAbaya.id)}` : '/customize';
+  const abayaHref = featuredAbaya ? `/customize?product=${encodeURIComponent(featuredAbaya.id)}&productType=Abaya` : '/customize?productType=Abaya';
 
   useEffect(() => {
     setExpandedCard(null);

@@ -699,3 +699,30 @@ body{background:var(--ink);color:var(--ivory);font-family:var(--font-ui),Arial,s
 @media(min-width:701px) and (max-width:900px){.editorial-hero .hero-content{width:calc(100% - 64px)}.editorial-hero .hero-garments{width:100%;height:37%;max-height:400px}.editorial-hero .hero-garment .garment-art svg{max-width:340px}}
 @media(max-width:700px){.editorial-hero .hero-content{width:calc(100% - 36px)}.editorial-hero .hero-garments{height:24%;max-height:250px;bottom:42px}.editorial-hero .hero-garment .garment-art svg{max-width:250px}}
 @media(prefers-reduced-motion:reduce){.editorial-hero .hero-garment{animation:none!important;transform:none!important}}
+
+/* Abaya model selection is backed by the saved product catalog, not legacy style cards. */
+.abaya-product-choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,245px),1fr));gap:clamp(15px,2.2vw,27px);align-items:start;margin-top:24px}
+.abaya-product-choice{min-width:0;overflow:hidden;border:1px solid rgba(245,241,232,.13);background:linear-gradient(155deg,rgba(245,241,232,.035),rgba(245,241,232,.012));transition:border-color .22s ease,background .22s ease,transform .22s ease}
+.abaya-product-choice:hover{border-color:rgba(201,169,110,.45);transform:translateY(-3px)}
+.abaya-product-choice.selected{border-color:var(--gold);background:linear-gradient(155deg,rgba(201,169,110,.1),rgba(245,241,232,.018));box-shadow:0 0 0 1px rgba(201,169,110,.16)}
+.abaya-product-choice-image{position:relative;display:block;width:100%;aspect-ratio:4/5;padding:0;overflow:hidden;border:0;background:#171719;cursor:pointer}
+.abaya-product-choice-image>img{display:block;width:100%;height:100%;object-fit:cover;transition:transform .55s cubic-bezier(.2,.7,.2,1),filter .35s ease}
+.abaya-product-choice:hover .abaya-product-choice-image>img{transform:scale(1.035);filter:saturate(1.04)}
+.abaya-product-choice-image>.garment-art{width:100%;height:100%;min-height:0}
+.abaya-product-choice-mark{position:absolute;right:12px;bottom:12px;padding:8px 10px;border:1px solid rgba(245,241,232,.48);background:rgba(11,11,13,.78);color:var(--ivory);font-size:8px;letter-spacing:.13em;text-transform:uppercase}
+.abaya-product-choice.selected .abaya-product-choice-mark{border-color:var(--gold);color:#e1c994}
+.abaya-product-choice-thumbnails{display:flex;gap:7px;overflow-x:auto;padding:10px 12px 0;scrollbar-width:thin;scrollbar-color:#786745 transparent}
+.abaya-product-choice-thumbnails button{flex:0 0 42px;width:42px;height:52px;padding:2px;border:1px solid rgba(245,241,232,.16);background:transparent;cursor:pointer}
+.abaya-product-choice-thumbnails button.active{border-color:var(--gold)}
+.abaya-product-choice-thumbnails img{display:block;width:100%;height:100%;object-fit:cover}
+.abaya-product-choice-copy{display:grid;gap:9px;padding:16px 16px 17px}
+.abaya-product-choice-copy .eyebrow{font-size:8px;letter-spacing:.17em;color:#c8ad79}
+.abaya-product-choice-copy h3{margin:6px 0 0;font-size:clamp(21px,2vw,28px);line-height:1.12}
+.abaya-product-choice-copy>p{min-height:2.8em;margin:0;font-size:11px;line-height:1.65}
+.abaya-product-choice-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:11px;border-top:1px solid rgba(245,241,232,.13)}
+.abaya-product-choice-footer>b{font-size:13px;font-weight:500;color:#e3d1ab;font-variant-numeric:tabular-nums}
+.abaya-product-choice-footer .text-link{display:inline-flex;align-items:center;gap:7px;padding:5px 0;font-size:8px;letter-spacing:.12em;text-transform:uppercase}
+.abaya-empty-state{margin-top:20px;padding:22px;border:1px solid rgba(245,241,232,.12);color:#b7b1a6;line-height:1.7}
+@media(max-width:700px){.abaya-product-choice-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,215px),1fr));gap:14px}.abaya-product-choice-copy{padding:14px}.abaya-product-choice-thumbnails{padding-inline:10px}}
+@media(max-width:480px){.abaya-product-choice-grid{grid-template-columns:1fr}.abaya-product-choice-image{aspect-ratio:4/5}.abaya-product-choice-copy>p{min-height:0}}
+@media(prefers-reduced-motion:reduce){.abaya-product-choice,.abaya-product-choice-image>img{transition:none}.abaya-product-choice:hover{transform:none}}
