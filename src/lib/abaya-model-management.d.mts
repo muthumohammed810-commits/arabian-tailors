@@ -1,0 +1,10 @@
+export function normalizeAbayaModelCode(value: unknown): string;
+export function isAbayaModelStep(step: unknown): boolean;
+export function getAbayaModelSteps(steps: unknown): Array<any>;
+export function seedAbayaModelCustomization(product: any, model: any, createId?: () => string): Record<string, unknown>;
+export function findAbayaModelStep(steps: unknown, modelId: string, preferredStepId?: string): any | null;
+export function addAbayaModel<T>(product: T, model: any, fallbackStepId: string): T;
+export function updateAbayaModel<T>(product: T, stepId: string, modelId: string, patch: Record<string, unknown>): T;
+export function deleteAbayaModel<T>(product: T, stepId: string, modelId: string): T;
+export function reorderAbayaModel<T>(product: T, stepId: string, modelId: string, direction: -1 | 1): T;
+export function validateAbayaModelCodes(products: unknown[], previousProducts?: unknown[]): { ok: true } | { ok: false; code: string; error: string };
