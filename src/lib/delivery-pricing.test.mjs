@@ -364,6 +364,30 @@ test('Abaya selectedModel snapshot must match a visible saved style selection', 
   ] }).ok, true);
 });
 
+test('Abaya checkout resolves a selected model from a later saved model step', () => {
+  const product = { id: 'abaya-later-step', name: 'Abaya', category: 'Abaya', price: 2000, customizationSteps: [
+    { id: 'models-first', title: 'Select Abaya Model', required: false, options: [{ id: 'first', name: 'First' }] },
+    { id: 'models-later', title: 'Abaya Style', required: false, options: [{ id: 'later', name: 'Later' }] },
+    { id: 'size', title: 'Size', required: true, options: [{ id: 'm', name: 'M' }] },
+  ] };
+  assert.deepEqual(calculateConfiguredSubtotal(product, { productType: 'Abaya', selectedModel: { id: 'later' }, customization: [
+    { stepId: 'models-later', optionId: 'later', option: 'Later', priceAdjustment: 0 },
+    { stepId: 'size', optionId: 'm', option: 'M', priceAdjustment: 0 },
+  ] }), { ok: true, basePrice: 2000, subtotal: 2000 });
+});
+
+test('Abaya parent product price remains authoritative over a legacy model base-price override', () => {
+  const product = { id: 'abaya-one', name: 'Abaya', category: 'Abaya', price: 1200, customizationSteps: [
+    { id: 'model', title: 'Select Abaya Model', required: false, options: [{ id: 'classic', name: 'Classic', basePrice: 1450, priceAdjustment: 75, visible: true, available: true }] },
+    { id: 'size', title: 'Size', required: true, options: [{ id: 'm', name: 'M', priceAdjustment: 0 }] },
+  ] };
+  const result = calculateConfiguredSubtotal(product, { productType: 'Abaya', selectedModel: { id: 'classic', basePrice: 1 }, customization: [
+    { stepId: 'model', optionId: 'classic', option: 'Classic', priceAdjustment: 75 },
+    { stepId: 'size', optionId: 'm', option: 'M', priceAdjustment: 0 },
+  ] });
+  assert.deepEqual(result, { ok: true, basePrice: 1200, subtotal: 1275 });
+});
+
 test('Abaya reference photo can substitute for a model selection but not the required size', () => {
   const abaya = { id: 'abaya', name: 'Abaya', price: 4000, category: 'Abaya', customizationSteps: [
     { id: 'model', title: 'Abaya Style', required: true, options: [{ id: 'classic', name: 'Classic', priceAdjustment: 0 }] },

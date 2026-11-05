@@ -14,6 +14,7 @@ import { ImageUploadError, withAbortableDeadline } from '@/lib/upload-batch';
 import { quoteFlatDelivery, resolveFlatDeliveryFee, type KeralaPostalDirectory, type DeliveryRule } from '@/lib/delivery-pricing';
 import { isRequiredCustomizationSelectionMissing } from '@/lib/custom-reference-order';
 import { getAbayaProductOrderSnapshot, getCustomerAbayaProducts } from '@/lib/abaya-product-selection.mjs';
+import { isAbayaModelStep } from '@/lib/abaya-model-management.mjs';
 
 type ManagedModelCategory = { visible?: boolean; required?: boolean; options: CustomizationOption[] };
 type ManagedModelStep = { id: string; title: string; description?: string; visible?: boolean; required?: boolean; options: CustomizationOption[] };
@@ -197,8 +198,10 @@ export default function Customize() {
   const isKandura = configuredProduct?.category.toLowerCase() === 'kandura' || (!selectedProduct && !isAbaya);
   const hasAbayaProductSelectionStep = isAbaya;
   const baseCustomSteps = configuredProduct?.customizationSteps || [];
-  const modelSelectionStep = baseCustomSteps.find(item => isAbaya ? /model|abaya\s*style|style/i.test(item.title) : /model/i.test(item.title));
-  const selectedModelOption = modelSelectionStep ? customSelections[modelSelectionStep.id] : undefined;
+  const firstModelSelectionStep = baseCustomSteps.find(item => isAbaya ? isAbayaModelStep(item) : /model/i.test(item.title));
+  const selectedAbayaModelEntry = isAbaya ? baseCustomSteps.map(step => ({ step, option: customSelections[step.id] })).find(entry => isAbayaModelStep(entry.step) && entry.option) : undefined;
+  const modelSelectionStep = selectedAbayaModelEntry?.step || firstModelSelectionStep;
+  const selectedModelOption = selectedAbayaModelEntry?.option || (modelSelectionStep ? customSelections[modelSelectionStep.id] : undefined);
   const modelCustomization = selectedModelOption?.modelCustomization;
   const categoryForTitle = (title: string): ModelCategoryKey | undefined => /model/i.test(title) ? undefined : /colou?r/i.test(title) ? 'colors' : /fabric|cloth/i.test(title) ? 'fabrics' : /stitch/i.test(title) ? 'stitching' : undefined;
   const customStepsWithModel: CustomizationStep[] = baseCustomSteps.map(item => {
@@ -223,7 +226,7 @@ export default function Customize() {
   const hasStoredCustomization = (configuredProduct?.customizationSteps?.length || 0) > 0;
   const hasGarmentDefaults = !isAbaya && (!selectedProduct || isKandura) && !hasStoredCustomization;
   const hasModelStep = isKandura && customSteps[0]?.title.toLowerCase() === 'choose your kandura model';
-  const hasAbayaModelStep = isAbaya && Boolean(customSteps[0] && /model/i.test(customSteps[0].title));
+  const hasAbayaModelStep = isAbaya && baseCustomSteps.some(isAbayaModelStep);
   const hasProductIntro = Boolean(selectedProduct && !isAbaya && !hasModelStep && !hasAbayaModelStep);
   const customStepStart = hasAbayaProductSelectionStep ? 1 : hasGarmentDefaults ? 4 : hasModelStep || hasAbayaModelStep ? 0 : hasProductIntro ? 1 : 0;
   const measurementFields = (configuredProduct?.measurements || []).filter(field => field.available !== false);
@@ -537,7 +540,7 @@ export default function Customize() {
               const item = activeCustomStep;
               const chosen = customSelections[item.id];
                   const visibleOptions = item.options.filter(option => option.visible !== false && option.available !== false && (option.stock === undefined || option.stock > 0));
-              const isModelStep = /model/i.test(item.title);
+              const isModelStep = isAbaya ? isAbayaModelStep(baseCustomSteps.find(configuredStep => configuredStep.id === item.id)) : /model/i.test(item.title);
               const supportsModelReference = isModelStep || Boolean(isAbaya && item.id === modelSelectionStep?.id);
               const showCustomMeasurements = needsCustomMeasurements && (customOptionMeasurements.length > 0 || (isKandura && (measurementGuides.length > 0 || Boolean(measurementGuideVideo))));
               return <>

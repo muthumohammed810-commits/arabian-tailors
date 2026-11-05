@@ -1,5 +1,6 @@
 import { isOfficialIndiaPostPinSource } from './delivery-rule-csv.mjs';
 import { getAbayaCustomerSteps, isCustomerVisibleOption } from './abaya-size-options.mjs';
+import { findAbayaModelStep } from './abaya-model-management.mjs';
 
 /** Fixed shop dispatch location shown in Admin; this is not a courier quote. */
 export const DELIVERY_PICKUP_ORIGIN = 'Parappanangadi, Malappuram, Kerala, India';
@@ -134,8 +135,10 @@ export function calculateConfiguredSubtotal(product: PriceProduct, design: any, 
     if (selection && typeof selection === 'object' && typeof selection.stepId === 'string' && !selectionsByStep.has(selection.stepId)) selectionsByStep.set(selection.stepId, selection);
   }
   const selectedModelId = typeof design?.selectedModel?.id === 'string' ? design.selectedModel.id : '';
-  const modelStep = steps.find(step => isAbaya ? /model/i.test(step.title) || /^abaya\s*style$/i.test(step.title.trim()) : /model/i.test(step.title));
-  const model = selectedModelId ? modelStep?.options.find(option => option.id === selectedModelId) : undefined;
+  const modelStep = selectedModelId
+    ? isAbaya ? findAbayaModelStep(steps, selectedModelId) : steps.find(step => /model/i.test(step.title))
+    : steps.find(step => isAbaya ? /model/i.test(step.title) || /^abaya\s*style$/i.test(step.title.trim()) : /model/i.test(step.title));
+  const model = selectedModelId ? modelStep?.options.find((option: PriceOption) => option.id === selectedModelId) : undefined;
   // A named model is optional; customers can describe the garment with a private reference photo or proceed without one.
   if (selectedModelId && (!model || (isAbaya && (modelStep?.available === false || modelStep?.visible === false || !isCustomerVisibleOption(model))))) return { ok: false, error: 'The selected model is no longer available. Refresh your choices.' };
   if (isAbaya) {
