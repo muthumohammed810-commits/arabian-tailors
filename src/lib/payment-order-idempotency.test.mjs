@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isSameOrderIntent } from './payment-order-idempotency.ts';
+import { customerPaymentAmount, remainingAfterReferenceAdvance } from './custom-reference-order.ts';
 
 const makeOrder = (overrides = {}) => ({
   id: 'AT-00112233445566778899aabbccddeeff',
@@ -46,4 +47,25 @@ test('custom reference order retry stays idempotent after Admin confirms a final
   const existing = makeOrder({ orderType: 'custom_reference_photo', estimatedTotal: 3200, advanceAmount: 500, finalPrice: 6500, finalPriceConfirmed: true, total: 6500, statusPayment: 'Paid' });
   assert.equal(isSameOrderIntent(existing, incoming), true);
   assert.equal(isSameOrderIntent(existing, { ...incoming, advanceAmount: 600 }), false);
+});
+
+test('replaying an Abaya reference-photo checkout reuses the existing single ₹500 payment record', () => {
+  const id = 'AT-ffeeddccbbaa99887766554433221100';
+  const design = {
+    productType: 'Abaya',
+    productId: 'abaya-noor',
+    productName: 'Noor Abaya',
+    basePrice: 1500,
+    options: [],
+    customization: [],
+    selectedModel: { id: 'noor-model', name: 'Noor Abaya', basePrice: 1500 },
+    customerReferencePhoto: { url: `https://store.blob.vercel-storage.com/arabian-tailors/order-reference-photos/${id}/123e4567-e89b-12d3-a456-426614174000.jpg`, fileName: 'reference.jpg', uploaded: true },
+    subtotal: 1500,
+  };
+  const incoming = makeOrder({ id, product: 'Noor Abaya', productId: 'abaya-noor', productName: 'Noor Abaya', productImage: 'https://example.invalid/noor.jpg', basePrice: 1500, subtotal: 1500, deliveryFee: 60, total: 1560, orderType: 'custom_reference_photo', estimatedTotal: 1560, estimatedBalanceAfterAdvance: remainingAfterReferenceAdvance(1500), advanceAmount: 500, design });
+  const existing = { ...incoming, paymentAmount: 500, statusPayment: 'Paid', paidAt: '2026-11-06T09:00:00.000Z' };
+  assert.equal(isSameOrderIntent(existing, incoming), true, 'retry with the same order reference returns the saved order instead of creating a second one');
+  assert.equal(customerPaymentAmount(existing), 500, 'the saved reference order still exposes exactly one advance amount');
+  assert.equal(existing.estimatedBalanceAfterAdvance, 1000, 'the ₹500 advance was deducted from the ₹1,500 model total');
+  assert.equal(customerPaymentAmount({ ...existing, advanceAmount: 501 }), null);
 });

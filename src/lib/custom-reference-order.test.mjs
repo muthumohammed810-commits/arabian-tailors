@@ -1,15 +1,20 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createUpiPaymentUrl } from './upi-payment.ts';
-import { isPhotoOnlyAbayaReferenceOrder } from './abaya-customization.ts';
+import { isAbayaReferencePhotoForOrder, isPhotoOnlyAbayaReferenceOrder, referencePhotoFromDesign } from './abaya-customization.ts';
 import {
   createCustomReferenceOrderFields,
   customerPaymentAmount,
   CUSTOM_REFERENCE_ADVANCE,
   canContinueAbayaReferenceChoice,
   isRequiredCustomizationSelectionMissing,
+  remainingAfterReferenceAdvance,
   updateCustomReferenceFinalPrice,
 } from './custom-reference-order.ts';
+
+const storeRouteSource = readFileSync(new URL('../app/api/store-data/route.ts', import.meta.url), 'utf8');
+const customizeSource = readFileSync(new URL('../app/customize/page.tsx', import.meta.url), 'utf8');
 
 test('verified photo order gets an independent INR 500 pending advance and preserves the estimate', () => {
   const terms = createCustomReferenceOrderFields(4260);
@@ -44,6 +49,53 @@ test('initial Abaya selection can continue with an uploaded reference photo and 
   assert.equal(canContinueAbayaReferenceChoice(false, true, true), false, 'wait until upload completes');
   assert.equal(canContinueAbayaReferenceChoice(false, true, false), true, 'photo-only request is selectable');
   assert.equal(canContinueAbayaReferenceChoice(true, false, false), true, 'a selected Abaya remains valid');
+});
+
+test('an attached Abaya reference photo makes only that order an exact INR 500 advance order', () => {
+  const id = `AT-${'b'.repeat(32)}`;
+  const design = {
+    productType: 'Abaya',
+    customerReferencePhoto: {
+      url: `https://store.blob.vercel-storage.com/arabian-tailors/order-reference-photos/${id}/123e4567-e89b-12d3-a456-426614174000.jpg`,
+      fileName: 'abaya-reference.jpg',
+      uploaded: true,
+    },
+  };
+  assert.equal(isAbayaReferencePhotoForOrder(design, id), true);
+  const orderFields = createCustomReferenceOrderFields(4820);
+  assert.equal(orderFields.advanceAmount, 500);
+  assert.equal(customerPaymentAmount({ ...orderFields, total: 4820 }), 500);
+  assert.equal(customerPaymentAmount({ orderType: 'standard', total: 4820 }), 4820, 'without a reference photo, standard checkout keeps its full total');
+  assert.equal(customerPaymentAmount({ orderType: 'custom_reference_photo', advanceAmount: 501, total: 4820 }), null, 'a manipulated advance is rejected');
+});
+
+test('Abaya remaining balance subtracts the included advance from the actual selected model total', () => {
+  assert.equal(remainingAfterReferenceAdvance(1500), 1000);
+  assert.equal(remainingAfterReferenceAdvance(2750.75), 2250.75);
+  assert.equal(remainingAfterReferenceAdvance(500), 0);
+  assert.equal(remainingAfterReferenceAdvance(499.99), null, 'below-advance model totals are not allowed to create an overpayment or negative balance');
+  assert.equal(remainingAfterReferenceAdvance(Number.NaN), null);
+});
+
+test('a normal Abaya model priced at INR 2,300 keeps full-price checkout without a customer-uploaded reference photo', () => {
+  const model = { id: 'abaya-model-2300', name: 'Test Abaya', price: 2300, images: ['https://example.invalid/admin-model-photo.jpg'] };
+  const design = { productType: 'Abaya', selectedModel: model, modelImage: model.images[0] };
+  assert.equal(referencePhotoFromDesign(design), null, 'Admin model imagery is not a customer reference-photo upload');
+  assert.equal(customerPaymentAmount({ total: model.price }), 2300, 'normal checkout uses the actual saved model price');
+  assert.match(customizeSource, /const isCustomReferenceOrder = Boolean\(\(isAbaya \|\| isKandura\) && modelReferencePhoto\?\.url\)/);
+  assert.match(storeRouteSource, /const isCustomReferenceOrder = Boolean\(referencePhotoUrl\)/);
+});
+
+test('server checkout validates the attached photo, sets the advance once, and returns the saved payment on retries', () => {
+  assert.match(storeRouteSource, /order\.design\?\.customerReferencePhoto !== undefined && \(!isGarmentReferencePhotoForOrder\(order\.design, order\.id\) \|\| !referencePhotoUrl\)/);
+  assert.match(storeRouteSource, /const isCustomReferenceOrder = Boolean\(referencePhotoUrl\)/);
+  assert.match(storeRouteSource, /hasPricedAbayaReference \? remainingAfterReferenceAdvance\(subtotal\) : null/);
+  assert.match(storeRouteSource, /hasPricedAbayaReference && estimatedBalanceAfterAdvance === null/);
+  assert.match(storeRouteSource, /estimatedBalanceAfterAdvance: estimatedBalanceAfterAdvance \?\? null/);
+  assert.match(storeRouteSource, /isCustomReferenceOrder\s*\?\s*\{ \.\.\.createCustomReferenceOrderFields\(finalTotal\)/);
+  assert.match(storeRouteSource, /paymentAmount: customerPaymentAmount\(clean\)/);
+  assert.match(storeRouteSource, /if \(isSameOrderIntent\(existing, clean\)\) return json\([\s\S]*?alreadySaved: true/);
+  assert.match(storeRouteSource, /orderType: isCustomReferenceOrder \? CUSTOM_REFERENCE_ORDER_TYPE : 'standard'/);
 });
 
 test('photo-only Abaya reference orders are accepted only with a private order-scoped photo and empty model selections', () => {

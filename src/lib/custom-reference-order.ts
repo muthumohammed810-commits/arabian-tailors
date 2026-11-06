@@ -1,6 +1,12 @@
 export const CUSTOM_REFERENCE_ADVANCE = 500;
 export const CUSTOM_REFERENCE_ORDER_TYPE = 'custom_reference_photo' as const;
 
+/** The ₹500 advance is included in an Abaya model's total, never added to it. */
+export function remainingAfterReferenceAdvance(modelTotal: number) {
+  if (!Number.isFinite(modelTotal) || modelTotal < CUSTOM_REFERENCE_ADVANCE) return null;
+  return Math.round((modelTotal - CUSTOM_REFERENCE_ADVANCE) * 100) / 100;
+}
+
 /** Customers may use an uploaded Abaya reference instead of choosing a catalog model. */
 export function canContinueAbayaReferenceChoice(hasSelectedProduct: boolean, hasUploadedPhoto: boolean, uploadPending: boolean) {
   return hasSelectedProduct || (hasUploadedPhoto && !uploadPending);
