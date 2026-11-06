@@ -1,6 +1,11 @@
 export const CUSTOM_REFERENCE_ADVANCE = 500;
 export const CUSTOM_REFERENCE_ORDER_TYPE = 'custom_reference_photo' as const;
 
+/** Customers may use an uploaded Abaya reference instead of choosing a catalog model. */
+export function canContinueAbayaReferenceChoice(hasSelectedProduct: boolean, hasUploadedPhoto: boolean, uploadPending: boolean) {
+  return hasSelectedProduct || (hasUploadedPhoto && !uploadPending);
+}
+
 /** Model/style selection never blocks progress; a photo may replace it or be omitted. */
 export function isRequiredCustomizationSelectionMissing(required: boolean, selected: boolean, isModelSelection: boolean, referencePhotoNotSaved: boolean) {
   return (required && !selected && !isModelSelection) || (isModelSelection && referencePhotoNotSaved);

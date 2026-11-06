@@ -107,18 +107,39 @@ test('Abaya saves validate model codes against existing store records and custom
   assert.match(customizeSource, /selectedModel:\s*\{/);
 });
 
-test('Abaya reference-photo choice precedes its model collection while Kandura keeps its existing placement', () => {
-  const abayaReference = customizeSource.indexOf('{isAbaya && supportsModelReference && <ModelReferencePhotoSection');
-  const optionCollection = customizeSource.indexOf('<div className="dynamic-option-list">', abayaReference);
+test('Abaya reference-photo choice is available before model selection while Kandura keeps its existing placement', () => {
+  const initialSelection = customizeSource.indexOf('{step === 0 && hasAbayaProductSelectionStep ? (');
+  const heading = customizeSource.indexOf('Select Abaya Model', initialSelection);
+  const abayaReference = customizeSource.indexOf('<ModelReferencePhotoSection', heading);
+  const abayaModels = customizeSource.indexOf('abaya-product-choice-grid', abayaReference);
   const kanduraReference = customizeSource.indexOf('{!isAbaya && supportsModelReference && <ModelReferencePhotoSection');
-  assert.notEqual(abayaReference, -1);
-  assert.ok(optionCollection > abayaReference, 'Abaya photo choice renders before the model cards');
-  assert.ok(kanduraReference > optionCollection, 'Kandura keeps the existing post-option placement');
+  assert.notEqual(initialSelection, -1);
+  assert.ok(abayaReference > heading && abayaModels > abayaReference, 'Abaya photo choice renders before the initial model cards');
+  assert.ok(kanduraReference > abayaModels, 'Kandura keeps the existing model-step placement');
   assert.match(customizeSource, /function ModelReferencePhotoSection\(/);
-  assert.match(customizeSource, /productType: selectedProduct\?\.category \|\| 'Kandura'/);
+  assert.match(customizeSource, /productType: isAbaya \? \(selectedProduct\?\.category \|\| 'Abaya'\) : selectedProduct\?\.category \|\| 'Kandura'/);
   assert.match(customizeSource, /customerReferencePhoto: \{ url: modelReferencePhoto\.url, fileName: modelReferencePhoto\.name, uploaded: true \}/);
   assert.match(customizeSource, /const expectedPaymentAmount = isCustomReferenceOrder \? 500 : finalTotal/);
   assert.match(storeRouteSource, /createCustomReferenceOrderFields\(finalTotal\)/);
   assert.match(customizeSource, /If we are unable to create your requested design, your ₹500 advance will be fully refunded\./);
   assert.match(customizeSource, /100% REFUND GUARANTEE/);
+});
+
+test('Abaya reference upload renders on the initial selection step before model cards, with no duplicate Abaya uploader', () => {
+  const initialStep = customizeSource.indexOf('{step === 0 && hasAbayaProductSelectionStep ? (');
+  const heading = customizeSource.indexOf('Select Abaya Model', initialStep);
+  const description = customizeSource.indexOf('Choose a piece from the current Abaya collection,', heading);
+  const uploader = customizeSource.indexOf('<ModelReferencePhotoSection', description);
+  const modelCards = customizeSource.indexOf('abaya-product-choice-grid', uploader);
+  assert.ok(initialStep >= 0 && heading > initialStep && description > heading && uploader > description && modelCards > uploader);
+  assert.equal((customizeSource.match(/<ModelReferencePhotoSection/g) || []).length, 2, 'one Abaya first-step instance and one shared Kandura instance');
+  assert.match(customizeSource, /!isAbaya && supportsModelReference && <ModelReferencePhotoSection/);
+  assert.doesNotMatch(customizeSource, /(?<![!])isAbaya && supportsModelReference && <ModelReferencePhotoSection/);
+  assert.match(customizeSource, /canContinueAbayaReferenceChoice\(Boolean\(selectedProduct\), Boolean\(modelReferencePhoto\?\.url\), referencePhotoNotSaved\)/);
+  assert.match(customizeSource, /productType: isAbaya \? \(selectedProduct\?\.category \|\| 'Abaya'\)/);
+  assert.match(customizeSource, /photoOnlyAbayaRequest \? \{\} : abayaProductSnapshot/);
+  assert.match(customizeSource, /photoOnlyAbayaRequest \? \{ basePrice: 0, options: \[\], customization: \[\], note \}/);
+  assert.match(customizeSource, /!photoOnlyAbayaRequest \? selectedOptions : \{\}/);
+  assert.match(storeRouteSource, /isPhotoOnlyAbayaReferenceOrder\(order\)/);
+  assert.match(storeRouteSource, /product: photoOnlyAbayaOrder \? 'Abaya · Custom Reference' : order\.product/);
 });
