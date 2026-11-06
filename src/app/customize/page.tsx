@@ -97,6 +97,32 @@ function CustomerMeasurementField({field,value,onChange}:{field:MeasurementField
   </div>;
 }
 
+function ModelReferencePhotoSection({
+  draft, photo, uploading, progress, error, onSelectPhoto, onRetry, onRemove,
+}: {
+  draft: ModelReferenceDraft | null;
+  photo: ModelReferencePhoto | null;
+  uploading: boolean;
+  progress: number;
+  error: string;
+  onSelectPhoto: (file: File | undefined) => void;
+  onRetry: () => void;
+  onRemove: () => void;
+}) {
+  return <section className="abaya-reference-upload" aria-label="Model reference photo">
+    <div><h3 className="serif">Upload a model reference photo</h3><p className="subtle">Optional. JPG, PNG or WebP · up to 10 MB. The photo is stored privately and attached to your order.</p></div>
+    {(draft || photo) && <img className="abaya-reference-preview" src={draft?.preview || photo?.preview} alt="Full model reference photo preview" />}
+    <div className="abaya-reference-actions">
+      <label className="btn btn-outline">{photo ? 'Replace photo' : 'Choose photo'}<input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" disabled={uploading} onChange={event => { onSelectPhoto(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }} /></label>
+      {draft && !uploading && <button type="button" className="btn btn-outline" onClick={onRetry}>Retry upload</button>}
+      {(draft || photo) && !uploading && <button type="button" className="btn btn-outline" onClick={onRemove}>Remove photo</button>}
+      {uploading && <span role="status" className="subtle">Uploading securely · {progress}%</span>}
+      {!draft && photo && <span role="status" className="subtle">Photo uploaded securely; it will be attached when you submit the order.</span>}
+    </div>
+    {error && <p role="alert" className="checkout-error">{error}</p>}
+  </section>;
+}
+
 export default function Customize() {
   const [step, setStep] = useState(0);
   const [style, setStyle] = useState(defaultProducts.find((product) => product.category.toLowerCase() === 'kandura')?.id || defaultStyles[0].id);
@@ -561,6 +587,7 @@ export default function Customize() {
                 {hasModelStep && step === 0 && configuredProduct?.images?.length ? <div className="product-image-gallery">{configuredProduct.images.map((image, index) => <img key={`${image}-${index}`} src={productImageSource(image)} alt={`${configuredProduct.name} image ${index + 1}`} />)}</div> : null}
                 <h2 className="serif customizer-step-title">{item.title}</h2>
                 <p className="subtle">{isModelStep ? 'Optional selection — a reference photo alone is also accepted' : item.required === true ? 'Required selection' : 'Optional selection'}{item.description ? ` · ${item.description}` : ''}</p>
+                {isAbaya && supportsModelReference && <ModelReferencePhotoSection draft={modelReferenceDraft} photo={modelReferencePhoto} uploading={modelReferenceUploading} progress={modelReferenceProgress} error={modelReferenceError} onSelectPhoto={selectModelReferencePhoto} onRetry={() => void uploadModelReferencePhoto()} onRemove={removeModelReferencePhoto} />}
                 <div className="dynamic-option-list">
                   {visibleOptions.map(option => {
                     const photos = [...new Set([...(option.images || []), ...(option.image ? [option.image] : [])])];
@@ -581,18 +608,7 @@ export default function Customize() {
                   })}
                   {!visibleOptions.length && <p className="subtle">No options are currently shown. Please contact the atelier.</p>}
                 </div>
-                {supportsModelReference && <section className="abaya-reference-upload" aria-label="Model reference photo">
-                  <div><h3 className="serif">Upload a model reference photo</h3><p className="subtle">Optional. JPG, PNG or WebP · up to 10 MB. The photo is stored privately and attached to your order.</p></div>
-                  {(modelReferenceDraft || modelReferencePhoto) && <img className="abaya-reference-preview" src={modelReferenceDraft?.preview || modelReferencePhoto?.preview} alt="Full model reference photo preview" />}
-                  <div className="abaya-reference-actions">
-                    <label className="btn btn-outline">{modelReferencePhoto ? 'Replace photo' : 'Choose photo'}<input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" disabled={modelReferenceUploading} onChange={event => { selectModelReferencePhoto(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }} /></label>
-                    {modelReferenceDraft && !modelReferenceUploading && <button type="button" className="btn btn-outline" onClick={() => void uploadModelReferencePhoto()}>Retry upload</button>}
-                    {(modelReferenceDraft || modelReferencePhoto) && !modelReferenceUploading && <button type="button" className="btn btn-outline" onClick={removeModelReferencePhoto}>Remove photo</button>}
-                    {modelReferenceUploading && <span role="status" className="subtle">Uploading securely · {modelReferenceProgress}%</span>}
-                    {!modelReferenceDraft && modelReferencePhoto && <span role="status" className="subtle">Photo uploaded securely; it will be attached when you submit the order.</span>}
-                  </div>
-                  {modelReferenceError && <p role="alert" className="checkout-error">{modelReferenceError}</p>}
-                </section>}
+                {!isAbaya && supportsModelReference && <ModelReferencePhotoSection draft={modelReferenceDraft} photo={modelReferencePhoto} uploading={modelReferenceUploading} progress={modelReferenceProgress} error={modelReferenceError} onSelectPhoto={selectModelReferencePhoto} onRetry={() => void uploadModelReferencePhoto()} onRemove={removeModelReferencePhoto} />}
                 {supportsModelReference && isCustomReferenceOrder && <div className="custom-reference-payment-highlights"><section className="custom-reference-advance"><span className="eyebrow">₹500 ADVANCE PAYMENT</span><strong>Pay ₹500 to confirm your custom order.</strong><p>₹500 is an advance, not the full stitching price. The final stitching price will be communicated through WhatsApp after our team reviews your uploaded reference photo.</p></section><section className="custom-reference-refund"><span className="eyebrow">100% REFUND GUARANTEE</span><strong>₹500 FULL REFUND</strong><p>If we are unable to create your requested design, your ₹500 advance will be fully refunded.</p></section></div>}
                 {showCustomMeasurements && <section className="inline-custom-measurements">
                   <button type="button" className="inline-custom-measurements-toggle" aria-expanded={customSizeExpanded} onClick={() => setCustomSizeExpanded(value => !value)}><span><b>Custom measurements</b><small className="subtle">Enter the fields requested by the atelier</small></span><span aria-hidden="true">{customSizeExpanded ? '−' : '+'}</span></button>
