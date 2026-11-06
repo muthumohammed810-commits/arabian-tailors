@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/app/admin/guard';
 import { authorizeAdminPushRequest } from '@/lib/admin-push-notifications.mjs';
+import { isSharedBlobConfigured } from '@/lib/shared-blob-storage.mjs';
 import {
   deleteAdminFcmDevice,
   deleteAdminFcmDeviceByToken,
@@ -38,7 +39,7 @@ async function readJson(request: Request) {
 
 export async function GET(request: Request) {
   if (!await authorized()) return json({ error: 'Sign in required.' }, 401);
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ configured: false, storageConfigured: false, devices: [] });
+  if (!isSharedBlobConfigured(process.env)) return json({ configured: false, storageConfigured: false, devices: [] });
   try {
     const orderId = new URL(request.url).searchParams.get('orderId');
     if (orderId !== null) {
@@ -58,7 +59,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   if (!await authorized()) return json({ error: 'Sign in required.' }, 401);
   if (!sameOrigin(request)) return json({ error: 'Request origin could not be verified.' }, 403);
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Persistent notification storage is not configured.' }, 503);
+  if (!isSharedBlobConfigured(process.env)) return json({ error: 'Persistent notification storage is not configured.' }, 503);
   const parsed = await readJson(request);
   if ('tooLarge' in parsed) return json({ error: 'Notification request is too large.' }, 413);
   const body = parsed.body;
@@ -88,7 +89,7 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   if (!await authorized()) return json({ error: 'Sign in required.' }, 401);
   if (!sameOrigin(request)) return json({ error: 'Request origin could not be verified.' }, 403);
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Persistent notification storage is not configured.' }, 503);
+  if (!isSharedBlobConfigured(process.env)) return json({ error: 'Persistent notification storage is not configured.' }, 503);
   const parsed = await readJson(request);
   if ('tooLarge' in parsed) return json({ error: 'Notification request is too large.' }, 413);
   const token = parsed.body?.token;

@@ -1,17 +1,20 @@
-import { get, list } from '@vercel/blob';
+import { get as blobGet, list as blobList } from '@vercel/blob';
 import { NextRequest, NextResponse } from 'next/server';
 import { isGarmentReferencePhotoForOrder, isModelReferenceUrl, isValidOrderReference, referencePhotoFromDesign } from '@/lib/abaya-customization';
 import { isAdminAuthenticated } from '@/app/admin/guard';
+import { resolveSharedBlobStorage, sharedBlobAuthOptions } from '@/lib/shared-blob-storage.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const ORDER_PREFIX = 'arabian-tailors/orders/';
 const notFound = () => new NextResponse('Not found', { status: 404, headers: { 'Cache-Control': 'private, no-store' } });
+const list = (options: any = {}) => blobList({ ...options, ...sharedBlobAuthOptions(process.env) });
+const get = (url: string, options: any = {}) => blobGet(url, { ...options, ...sharedBlobAuthOptions(process.env) });
 
 export async function GET(request: NextRequest) {
   if (!await isAdminAuthenticated()) return new NextResponse('Sign in required', { status: 401, headers: { 'Cache-Control': 'private, no-store' } });
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return notFound();
+  if (!resolveSharedBlobStorage(process.env).configured) return notFound();
   const orderId = request.nextUrl.searchParams.get('orderId') || '';
   if (!isValidOrderReference(orderId)) return notFound();
 

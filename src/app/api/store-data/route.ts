@@ -1,4 +1,4 @@
-import { list, get, put, del } from '@vercel/blob';
+import { list as blobList, get as blobGet, put as blobPut, del as blobDel } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/app/admin/guard';
 import { products as catalog } from '@/lib/catalog';
@@ -21,6 +21,8 @@ import { findLegacyAbayaFallback, hasManagedAbayaCatalog } from '@/lib/abaya-pro
 import { projectPublicStoreProduct } from '@/lib/public-store-product.mjs';
 import { buildAdminStoreResponse } from '@/lib/admin-store-response.mjs';
 import { validateAbayaModelCodes } from '@/lib/abaya-model-management.mjs';
+import { findRecordAcrossCatalogs, getUniqueCatalogRecordIds, isAbayaRecord, keepLegacyAbayaAsProduct, moveLegacyAbayaToManagement, replaceCatalogCollection, splitProductRecords } from '@/lib/abaya-data-separation.mjs';
+import { resolveSharedBlobStorage, sharedBlobAuthOptions } from '@/lib/shared-blob-storage.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,9 +30,14 @@ export const maxDuration = 60;
 const STORE_FILE = 'arabian-tailors/store.json';
 const ORDER_PREFIX = 'arabian-tailors/orders/';
 const ADMIN_ORDER_BASE_URL = 'https://arabian-tailors.vercel.app';
+const sharedStorageConfigured = () => resolveSharedBlobStorage(process.env).configured;
+const list = (options: any = {}) => blobList({ ...options, ...sharedBlobAuthOptions(process.env) });
+const get = (url: string, options: any = {}) => blobGet(url, { ...options, ...sharedBlobAuthOptions(process.env) });
+const put = (pathname: string, body: any, options: any = {}) => blobPut(pathname, body, { ...options, ...sharedBlobAuthOptions(process.env) });
+const del = (url: string | string[], options: any = {}) => blobDel(url, { ...options, ...sharedBlobAuthOptions(process.env) });
 const statuses = ['New', 'In production', 'Ready to ship', 'Delivered', 'Cancelled'] as const;
-type Store = { products: any[]; settings: Record<string, any>; abayaCatalogManaged?: boolean };
-const defaultStore = (): Store => ({ products: catalog.map(p => ({ ...p, stock: 0, available: true, stitchingType: '', options: [] })), settings: {}, abayaCatalogManaged: false });
+type Store = { products: any[]; abayaProducts: any[]; settings: Record<string, any>; abayaCatalogManaged?: boolean };
+const defaultStore = (): Store => ({ products: catalog.map(p => ({ ...p, stock: 0, available: true, stitchingType: '', options: [] })), abayaProducts: [], settings: {}, abayaCatalogManaged: false });
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 const validText = (value: unknown, max = 500) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
 function logOrderWriteFailure(orderId: string, error: unknown) {
@@ -83,6 +90,24 @@ function validCustomizationSteps(value: unknown) {
     return step.options.every((option: any) => validOption(option, true));
   });
 }
+function validProductList(value: unknown) {
+  return Array.isArray(value) && value.length <= 500
+    && value.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80)
+      && (p.catalogOwner === undefined || p.catalogOwner === 'products')
+      && (p.abayaCategory === undefined || typeof p.abayaCategory === 'string' && p.abayaCategory.length <= 80)
+      && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000)
+      && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0
+      && (p.available === undefined || typeof p.available === 'boolean')
+      && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160))
+      && validCustomizationSteps(p.customizationSteps) && isValidMeasurementFields(p.measurements, p.id)
+      && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean')
+      && (p.measurementGuideVideo === undefined || isValidMeasurementGuideVideo(p.measurementGuideVideo, p.id))
+      && (p.measurementGuides === undefined || isValidMeasurementGuideList(p.measurementGuides, p.id))
+      && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160)
+      && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000)
+      && (p.images === undefined || Array.isArray(p.images) && p.images.every((image: any) => typeof image === 'string' && image.length <= 2000)))
+    && new Set(value.map((p: any) => p.id)).size === value.length;
+}
 async function readBlob(pathname: string) {
   const { blobs } = await list({ prefix: pathname, limit: 1 });
   const blob = blobs.find(item => item.pathname === pathname);
@@ -93,7 +118,12 @@ async function readBlob(pathname: string) {
 async function readStore(): Promise<Store> {
   const stored = await readBlob(STORE_FILE);
   if (!stored || !Array.isArray(stored.products)) return defaultStore();
-  return { products: stored.products, settings: stored.settings && typeof stored.settings === 'object' ? stored.settings : {}, abayaCatalogManaged: stored.abayaCatalogManaged === true };
+  return { products: stored.products, abayaProducts: Array.isArray(stored.abayaProducts) ? stored.abayaProducts : [], settings: stored.settings && typeof stored.settings === 'object' ? stored.settings : {}, abayaCatalogManaged: stored.abayaCatalogManaged === true };
+}
+function storeProductLocation(store: Store, productId: string) {
+  const product = findRecordAcrossCatalogs(store.products, store.abayaProducts, productId);
+  if (!product) return null;
+  return { product, collection: store.abayaProducts.includes(product) ? 'abayaProducts' as const : 'products' as const };
 }
 async function listOrders() {
   const blobs = await listAllBlobPages((options) => list(options), { prefix: ORDER_PREFIX, limit: 1000 });
@@ -279,37 +309,50 @@ function setOptionPhotos(option: any, images: string[]) {
 }
 
 export async function GET() {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Shared storage is not connected.' }, 503);
+  if (!sharedStorageConfigured()) return json({ error: 'Shared storage is not connected for this environment.' }, 503);
   try {
     const store = await readStore();
     const migratedCustomization = addDefaultCustomization(store);
+    const migratedAbayaCustomization = addDefaultCustomization({ products: store.abayaProducts });
     if (await isAdminAuthenticated()) {
-      if (migratedCustomization) await saveStore(store);
+      if (migratedCustomization || migratedAbayaCustomization) await saveStore(store);
       const orders = (await listOrders()).map(safePayment);
       const customers = paidOrderCustomerEntries(orders);
-      return json(buildAdminStoreResponse(store, orders, customers, summarizeOrders(orders)));
+      const separated = splitProductRecords(store.products);
+      return json(buildAdminStoreResponse({ ...store, products: separated.products, legacyAbayaProducts: separated.legacyAbayaProducts }, orders, customers, summarizeOrders(orders)));
     }
-    const abayaCatalogManaged = hasManagedAbayaCatalog(store.products, store.abayaCatalogManaged);
-    const publicProducts = store.products.filter(p => p.available !== false).map((product: any) => projectPublicStoreProduct({
+    const separated = splitProductRecords(store.products);
+    const abayaCatalogManaged = hasManagedAbayaCatalog([...store.abayaProducts, ...separated.legacyAbayaProducts], store.abayaCatalogManaged);
+    const allCatalogRecords = [...store.products, ...store.abayaProducts];
+    const uniqueCatalogIds = getUniqueCatalogRecordIds(allCatalogRecords);
+    const hasUniqueCatalogIdentity = (product: any) => uniqueCatalogIds.has(product.id);
+    const publicProducts = separated.products.filter(p => p.available !== false && hasUniqueCatalogIdentity(p)).map((product: any) => projectPublicStoreProduct({
       ...product,
       ...(/^(kandura|abaya)$/i.test(String(product.category || '').trim()) && Array.isArray(product.measurements) ? { measurements: publishedMeasurementFields(product.measurements, product.id, product.measurementsEnabled !== false).filter((field: any) => !/^abaya$/i.test(String(product.category || '').trim()) || field.available !== false) } : {}),
       ...(/^(kandura|abaya)$/i.test(String(product.category || '').trim()) && product.measurementGuideVideo ? { measurementGuideVideo: publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id, product.measurementsEnabled !== false) } : {}),
       ...(/^(kandura|abaya)$/i.test(String(product.category || '').trim()) && Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
-    }, { managedAbayaCatalog: abayaCatalogManaged })).filter(Boolean);
-    // Legacy Abaya choices remain available only before an Admin-managed Abaya catalog exists.
-    if (!abayaCatalogManaged) {
+    }, { managedAbayaCatalog: isAbayaRecord(product) ? false : abayaCatalogManaged })).filter(Boolean);
+    const publicAbayaProducts = store.abayaProducts.filter(p => p.available !== false && hasUniqueCatalogIdentity(p)).map((product: any) => projectPublicStoreProduct({
+      ...product,
+      ...(Array.isArray(product.measurements) ? { measurements: publishedMeasurementFields(product.measurements, product.id, product.measurementsEnabled !== false).filter((field: any) => field.available !== false) } : {}),
+      ...(product.measurementGuideVideo ? { measurementGuideVideo: publishedMeasurementGuideVideo(product.measurementGuideVideo, product.id, product.measurementsEnabled !== false) } : {}),
+      ...(Array.isArray(product.measurementGuides) ? { measurementGuides: publishedMeasurementGuides(product.measurementGuides, product.id) } : {}),
+    }, { managedAbayaCatalog: true })).filter(Boolean);
+    let publicLegacyAbayaProducts = separated.legacyAbayaProducts.filter(p => p.available !== false && hasUniqueCatalogIdentity(p)).map((product: any) => projectPublicStoreProduct(product, { managedAbayaCatalog: true })).filter(Boolean);
+    // Keep pre-existing legacy choices available in the Abaya configurator, never in Products & Services.
+    if (!abayaCatalogManaged && publicLegacyAbayaProducts.length === 0) {
       const legacyStore = { products: catalog.filter(product => product.category.toLowerCase() === 'abaya').map(product => ({ ...product, stock: 0, available: true, stitchingType: '', options: [] })) };
       addDefaultCustomization(legacyStore);
-      publicProducts.push(...legacyStore.products.map((product) => projectPublicStoreProduct(product)).filter(Boolean));
+      publicLegacyAbayaProducts = legacyStore.products.map((product) => projectPublicStoreProduct(product)).filter(Boolean);
     }
     const storefrontSettings = publicStoreSettings(store.settings);
-    return json({ products: publicProducts, abayaCatalogManaged, settings: { ...storefrontSettings, deliveryRules: publicDeliveryRules(Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) } });
+    return json({ products: publicProducts, abayaProducts: publicAbayaProducts, legacyAbayaProducts: publicLegacyAbayaProducts, abayaCatalogManaged, settings: { ...storefrontSettings, deliveryRules: publicDeliveryRules(Array.isArray(store.settings.deliveryRules) ? store.settings.deliveryRules : []) } });
   } catch { return json({ error: 'Could not load store data.' }, 500); }
 }
 
 export async function PUT(request: Request) {
   if (!await isAdminAuthenticated()) return json({ error: 'Sign in required.' }, 401);
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Shared storage is not connected.' }, 503);
+  if (!sharedStorageConfigured()) return json({ error: 'Shared storage is not connected for this environment.' }, 503);
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'Invalid request.' }, 400);
   try {
@@ -335,20 +378,52 @@ export async function PUT(request: Request) {
       const store = await readStore(); store.settings = body.settings; await saveStore(store); return json({ ok: true, settings: store.settings });
     }
     if (body.resource === 'products') {
-      if (!Array.isArray(body.products) || body.products.length > 500 || !body.products.every((p: any) => validText(p.id, 100) && validText(p.name, 160) && validText(p.category, 80) && (p.abayaCategory === undefined || typeof p.abayaCategory === 'string' && p.abayaCategory.length <= 80) && (p.description === undefined || typeof p.description === 'string' && p.description.length <= 2000) && Number.isFinite(p.price) && p.price >= 0 && Number.isFinite(p.stock) && p.stock >= 0 && (p.available === undefined || typeof p.available === 'boolean') && (p.options === undefined || Array.isArray(p.options) && p.options.length <= 50 && p.options.every((o: any) => typeof o === 'string' && o.length <= 160)) && validCustomizationSteps(p.customizationSteps) && isValidMeasurementFields(p.measurements, p.id) && (p.measurementsEnabled === undefined || typeof p.measurementsEnabled === 'boolean') && (p.measurementGuideVideo === undefined || isValidMeasurementGuideVideo(p.measurementGuideVideo, p.id)) && (p.measurementGuides === undefined || isValidMeasurementGuideList(p.measurementGuides, p.id)) && (p.stitchingType === undefined || typeof p.stitchingType === 'string' && p.stitchingType.length <= 160) && (p.image === undefined || typeof p.image === 'string' && p.image.length <= 2000) && (p.images === undefined || Array.isArray(p.images) && p.images.every((image: any) => typeof image === 'string' && image.length <= 2000)))) return json({ error: 'Invalid product list.' }, 400);
-      if (new Set(body.products.map((p: any) => p.id)).size !== body.products.length) return json({ error: 'Product IDs must be unique.' }, 400);
+      if (!validProductList(body.products) || body.products.some((product: any) => isAbayaRecord(product) && product.catalogOwner !== 'products')) return json({ error: 'Invalid Product Management records. Abaya Management records require the Abaya collection.' }, 400);
       const store = await readStore();
-      const abayaModelCodes = validateAbayaModelCodes(body.products, store.products);
+      const replacement = replaceCatalogCollection(store.products, store.abayaProducts, 'products', body.products);
+      if (!replacement.ok) return json({ error: replacement.code === 'UNCLASSIFIED_ABAYA' ? 'Resolve the unclassified legacy Abaya record before reusing its product ID.' : 'Product IDs must be unique across management collections.' }, 409);
+      const legacyIds = new Set(splitProductRecords(store.products).legacyAbayaProducts.map((product: any) => product.id));
+      if (body.products.some((product: any) => legacyIds.has(product.id))) return json({ error: 'Resolve the unclassified legacy Abaya record before reusing its product ID.' }, 409);
+      const abayaModelCodes = validateAbayaModelCodes(body.products, splitProductRecords(store.products).products);
       if (!abayaModelCodes.ok) return json({ error: abayaModelCodes.error, code: abayaModelCodes.code }, 400);
-      const abayaCatalogManaged = hasManagedAbayaCatalog(store.products, store.abayaCatalogManaged) || hasManagedAbayaCatalog(body.products);
-      store.products = body.products;
-      if (abayaCatalogManaged) store.abayaCatalogManaged = true;
-      await saveStore(store); return json({ ok: true, products: store.products });
+      store.products = replacement.products;
+      await saveStore(store); return json({ ok: true, products: splitProductRecords(store.products).products });
+    }
+    if (body.resource === 'abayaCatalog') {
+      if (!validProductList(body.products) || !body.products.every((product: any) => isAbayaRecord(product) && product.catalogOwner === undefined)) return json({ error: 'Invalid Abaya Management records.' }, 400);
+      const store = await readStore();
+      const replacement = replaceCatalogCollection(store.products, store.abayaProducts, 'abaya', body.products);
+      if (!replacement.ok) return json({ error: 'Abaya record IDs must be unique across management collections.' }, 409);
+      const abayaModelCodes = validateAbayaModelCodes(body.products, store.abayaProducts);
+      if (!abayaModelCodes.ok) return json({ error: abayaModelCodes.error, code: abayaModelCodes.code }, 400);
+      store.abayaProducts = replacement.abayaProducts;
+      if (store.abayaProducts.length > 0) store.abayaCatalogManaged = true;
+      await saveStore(store); return json({ ok: true, abayaProducts: store.abayaProducts });
+    }
+    if (body.resource === 'abayaMigration') {
+      if (!validText(body.id, 100) || body.confirmed !== true || !['moveToAbayaManagement', 'keepAsProduct'].includes(body.action)) return json({ error: 'Confirm the legacy Abaya classification action.' }, 400);
+      const store = await readStore();
+      if (body.action === 'moveToAbayaManagement') {
+        const moved = moveLegacyAbayaToManagement(store.products, store.abayaProducts, body.id);
+        if (!moved.ok) return json({ error: moved.code === 'PRODUCT_ID_CONFLICT' ? 'A matching record already exists in another management collection.' : 'Legacy Abaya record not found.' }, moved.code === 'PRODUCT_ID_CONFLICT' ? 409 : 404);
+        store.products = moved.products;
+        store.abayaProducts = moved.abayaProducts;
+        store.abayaCatalogManaged = true;
+      } else {
+        if (store.abayaProducts.some((product: any) => product.id === body.id)) return json({ error: 'A matching Abaya record already exists.' }, 409);
+        const kept = keepLegacyAbayaAsProduct(store.products, body.id);
+        if (!kept.ok) return json({ error: kept.code === 'PRODUCT_ID_CONFLICT' ? 'The legacy Abaya ID is ambiguous and cannot be classified safely.' : 'Legacy Abaya record not found.' }, kept.code === 'PRODUCT_ID_CONFLICT' ? 409 : 404);
+        store.products = kept.products;
+        store.abayaCatalogManaged = true;
+      }
+      await saveStore(store);
+      const separated = splitProductRecords(store.products);
+      return json({ ok: true, products: separated.products, legacyAbayaProducts: separated.legacyAbayaProducts, abayaProducts: store.abayaProducts });
     }
     if (body.resource === 'measurementGuides') {
       if (body.action !== 'save' || !validText(body.productId, 100) || !isValidMeasurementGuideList(body.guides, body.productId)) return json({ error: 'Invalid product measurement guide configuration.' }, 400);
       const store = await readStore();
-      const product = store.products.find((item: any) => item.id === body.productId);
+      const product = storeProductLocation(store, body.productId)?.product;
       if (!product || !/^(kandura|abaya)$/i.test(String(product.category || '').trim())) return json({ error: 'Kandura or Abaya product not found.' }, 404);
       product.measurementGuides = body.guides;
       await saveStore(store);
@@ -363,7 +438,7 @@ export async function PUT(request: Request) {
         return json({ error: 'Invalid product measurement media configuration.' }, 400);
       }
       const store = await readStore();
-      const product = store.products.find((item: any) => item.id === body.productId);
+      const product = storeProductLocation(store, body.productId)?.product;
       if (!product || !/^(kandura|abaya)$/i.test(String(product.category || '').trim())) return json({ error: 'Kandura or Abaya product not found.' }, 404);
       if (hasFields) product.measurements = body.measurements;
       if (hasVideo) product.measurementGuideVideo = body.measurementGuideVideo || undefined;
@@ -374,7 +449,7 @@ export async function PUT(request: Request) {
       if (!validText(body.productId, 100) || !isVercelBlobUrl(body.url) || !['add', 'replace'].includes(body.action)) return json({ error: 'Invalid image update.' }, 400);
       if (body.action === 'replace' && (!Number.isInteger(body.index) || body.index < 0)) return json({ error: 'Invalid photo position.' }, 400);
       const store = await readStore();
-      const product = store.products.find((item: any) => item.id === body.productId);
+      const product = storeProductLocation(store, body.productId)?.product;
       if (!product) return json({ error: 'Product not found. Save the product before uploading photos.' }, 404);
       let target: any;
       if (body.resource === 'productPhotos') {
@@ -501,9 +576,9 @@ export async function PUT(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    console.error('[store-data] Order persistence unavailable: BLOB_READ_WRITE_TOKEN is not configured', { vercelEnvironment: process.env.VERCEL_ENV || 'unknown' });
-    return json({ error: 'Shared storage is not connected.' }, 503);
+  if (!sharedStorageConfigured()) {
+    console.error('[store-data] Order persistence unavailable: shared Blob authentication is not configured', { vercelEnvironment: process.env.VERCEL_ENV || 'unknown' });
+    return json({ error: 'Shared storage is not connected for this environment.' }, 503);
   }
   const order = await request.json().catch(() => null);
   if (!order || !validText(order.id, 100) || !/^AT-(?:[0-9]{6,}|[0-9a-f]{32})$/i.test(order.id) || !validText(order.customer, 160) || !validText(order.product, 240) || !Number.isFinite(order.total) || order.total < 0 || !statuses.includes(order.status) || !validEmail(order.delivery?.email) || !validText(order.delivery?.phone, 40) || !validText(order.delivery?.address, 500) || !validText(order.delivery?.city, 100) || !validText(order.delivery?.postal, 20)) return json({ error: 'Invalid order.' }, 400);
@@ -517,10 +592,14 @@ export async function POST(request: Request) {
   try {
     const store = await readStore();
     addDefaultCustomization(store);
-    let product = store.products.find((item: any) => item.id === order.productId);
+    addDefaultCustomization({ products: store.abayaProducts });
+    const productId = order.productId || '';
+    const storedProductMatches = [...store.products, ...store.abayaProducts].filter((record: any) => record.id === productId);
+    if (storedProductMatches.length > 1) return json({ error: 'This product reference is ambiguous. Contact the atelier before placing the order.' }, 409);
+    let product = storedProductMatches[0];
     if (!product && order.design?.productId !== undefined && order.design.productId !== order.productId) return json({ error: 'The selected product does not match the submitted design. Refresh your choices.' }, 400);
     if (!product && String(order.design?.productType || '').toLowerCase() === 'abaya') {
-      const legacyProduct = findLegacyAbayaFallback(order.productId, catalog, hasManagedAbayaCatalog(store.products, store.abayaCatalogManaged));
+      const legacyProduct = findLegacyAbayaFallback(order.productId, catalog, hasManagedAbayaCatalog(store.abayaProducts, store.abayaCatalogManaged));
       if (legacyProduct) {
         const fallbackStore = { products: [{ ...legacyProduct, stock: 0, available: true, stitchingType: '', options: [] }] };
         addDefaultCustomization(fallbackStore);

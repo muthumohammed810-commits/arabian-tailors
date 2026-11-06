@@ -1,21 +1,24 @@
-import { get } from '@vercel/blob';
+import { get as blobGet } from '@vercel/blob';
 import { NextRequest, NextResponse } from 'next/server';
 import { isPublicProductImagePath } from '@/lib/product-image-url';
 import { hasPublishedMeasurementGuideImage, hasPublishedMeasurementGuideVideo, isMeasurementGuideImagePath, isMeasurementGuideVideoPath } from '@/lib/measurement-guides.mjs';
 import { isAdminAuthenticated } from '@/app/admin/guard';
+import { sharedBlobAuthOptions } from '@/lib/shared-blob-storage.mjs';
+
+const get = (url: string, options: any = {}) => blobGet(url, { ...options, ...sharedBlobAuthOptions(process.env) });
 
 async function isPublishedGuideImage(pathname: string) {
   const stored = await get('arabian-tailors/store.json', { access: 'private', useCache: false });
   if (stored?.statusCode !== 200 || !stored.stream) return false;
-  const store = await new Response(stored.stream).json() as { products?: unknown };
-  return hasPublishedMeasurementGuideImage(store.products as any[], pathname);
+  const store = await new Response(stored.stream).json() as { products?: unknown[]; abayaProducts?: unknown[] };
+  return hasPublishedMeasurementGuideImage([...(Array.isArray(store.products) ? store.products : []), ...(Array.isArray(store.abayaProducts) ? store.abayaProducts : [])] as any[], pathname);
 }
 
 async function isPublishedGuideVideo(pathname: string) {
   const stored = await get('arabian-tailors/store.json', { access: 'private', useCache: false });
   if (stored?.statusCode !== 200 || !stored.stream) return false;
-  const store = await new Response(stored.stream).json() as { products?: unknown };
-  return hasPublishedMeasurementGuideVideo(store.products as any[], pathname);
+  const store = await new Response(stored.stream).json() as { products?: unknown[]; abayaProducts?: unknown[] };
+  return hasPublishedMeasurementGuideVideo([...(Array.isArray(store.products) ? store.products : []), ...(Array.isArray(store.abayaProducts) ? store.abayaProducts : [])] as any[], pathname);
 }
 
 export const runtime = 'nodejs';

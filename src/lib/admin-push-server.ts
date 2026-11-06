@@ -1,4 +1,4 @@
-import { del, get, list, put } from '@vercel/blob';
+import { del as blobDel, get as blobGet, list as blobList, put as blobPut } from '@vercel/blob';
 import { cert, getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import {
@@ -7,12 +7,18 @@ import {
   getFirebaseWebConfiguration, isRetryableAdminPushRecord, normalizeFcmToken,
   parseFirebaseServiceAccount, safeAdminDeviceName,
 } from '@/lib/admin-push-notifications.mjs';
+import { isSharedBlobConfigured, sharedBlobAuthOptions } from '@/lib/shared-blob-storage.mjs';
 
 type DeviceRecord = { id: string; token: string; deviceName: string; adminAccount: string; registeredAt: string; lastSeenAt: string };
 const devicePath = (id: string) => `${ADMIN_PUSH_DEVICE_PREFIX}${id}.json`;
 const deliveryPath = (orderId: string, id: string) => `${ADMIN_PUSH_DELIVERY_PREFIX}${orderId}/${id}.json`;
 const retryLockPath = (orderId: string, id: string) => `${ADMIN_PUSH_DELIVERY_PREFIX}${orderId}/${id}.retry-lock.json`;
 const safeId = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.-]{1,120}$/.test(value) ? value : undefined;
+const blobOptions = () => sharedBlobAuthOptions(process.env);
+const get = (url: string, options: any = {}) => blobGet(url, { ...options, ...blobOptions() });
+const list = (options: any = {}) => blobList({ ...options, ...blobOptions() });
+const put = (pathname: string, body: any, options: any = {}) => blobPut(pathname, body, { ...options, ...blobOptions() });
+const del = (url: string | string[], options: any = {}) => blobDel(url, { ...options, ...blobOptions() });
 
 async function readPrivateUrl(url: string): Promise<any | null> {
   const response = await get(url, { access: 'private', useCache: false });
@@ -52,7 +58,7 @@ async function removeStoredDevice(id: string) {
 function firebaseApp(): App | null {
   const webConfig = getFirebaseWebConfiguration(process.env);
   const serviceAccount = parseFirebaseServiceAccount(process.env.FIREBASE_SERVICE_ACCOUNT_JSON, webConfig?.projectId);
-  if (!webConfig || !serviceAccount || !process.env.BLOB_READ_WRITE_TOKEN) return null;
+  if (!webConfig || !serviceAccount || !isSharedBlobConfigured(process.env)) return null;
   const existing = getApps().find(app => app.name === 'arabian-tailors-fcm');
   if (existing) return existing;
   return initializeApp({ credential: cert({ projectId: serviceAccount.projectId, clientEmail: serviceAccount.clientEmail, privateKey: serviceAccount.privateKey }) }, 'arabian-tailors-fcm');
@@ -65,7 +71,7 @@ function sendFcm(token: string, data: Record<string, string>) {
 }
 
 export async function getAdminFcmConfiguration() {
-  return { configured: Boolean(firebaseApp()), storageConfigured: Boolean(process.env.BLOB_READ_WRITE_TOKEN) };
+  return { configured: Boolean(firebaseApp()), storageConfigured: isSharedBlobConfigured(process.env) };
 }
 
 export async function listAdminFcmDevices() {
