@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createUpiPaymentUrl } from './upi-payment.ts';
-import { isAbayaReferencePhotoForOrder, isPhotoOnlyAbayaReferenceOrder } from './abaya-customization.ts';
+import { isAbayaReferencePhotoForOrder, isPhotoOnlyAbayaReferenceOrder, referencePhotoFromDesign } from './abaya-customization.ts';
 import {
   createCustomReferenceOrderFields,
   customerPaymentAmount,
@@ -14,6 +14,7 @@ import {
 } from './custom-reference-order.ts';
 
 const storeRouteSource = readFileSync(new URL('../app/api/store-data/route.ts', import.meta.url), 'utf8');
+const customizeSource = readFileSync(new URL('../app/customize/page.tsx', import.meta.url), 'utf8');
 
 test('verified photo order gets an independent INR 500 pending advance and preserves the estimate', () => {
   const terms = createCustomReferenceOrderFields(4260);
@@ -74,6 +75,15 @@ test('Abaya remaining balance subtracts the included advance from the actual sel
   assert.equal(remainingAfterReferenceAdvance(500), 0);
   assert.equal(remainingAfterReferenceAdvance(499.99), null, 'below-advance model totals are not allowed to create an overpayment or negative balance');
   assert.equal(remainingAfterReferenceAdvance(Number.NaN), null);
+});
+
+test('a normal Abaya model priced at INR 2,300 keeps full-price checkout without a customer-uploaded reference photo', () => {
+  const model = { id: 'abaya-model-2300', name: 'Test Abaya', price: 2300, images: ['https://example.invalid/admin-model-photo.jpg'] };
+  const design = { productType: 'Abaya', selectedModel: model, modelImage: model.images[0] };
+  assert.equal(referencePhotoFromDesign(design), null, 'Admin model imagery is not a customer reference-photo upload');
+  assert.equal(customerPaymentAmount({ total: model.price }), 2300, 'normal checkout uses the actual saved model price');
+  assert.match(customizeSource, /const isCustomReferenceOrder = Boolean\(\(isAbaya \|\| isKandura\) && modelReferencePhoto\?\.url\)/);
+  assert.match(storeRouteSource, /const isCustomReferenceOrder = Boolean\(referencePhotoUrl\)/);
 });
 
 test('server checkout validates the attached photo, sets the advance once, and returns the saved payment on retries', () => {
