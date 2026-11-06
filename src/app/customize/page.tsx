@@ -8,7 +8,7 @@ import { GarmentVisual } from '@/components/garment-visual';
 import { createUpiPaymentUrl } from '@/lib/upi-payment';
 import { customizationDefaults, defaultMeasurements } from '@/lib/customization-defaults';
 import { productImageSource } from '@/lib/product-image-url';
-import { upload } from '@vercel/blob/client';
+import { upload, uploadPresigned } from '@vercel/blob/client';
 import { MODEL_REFERENCE_PREFIX, getAbayaCustomerSteps, isModelReferenceUrl, validateModelReferenceFile } from '@/lib/abaya-customization';
 import { ImageUploadError, withAbortableDeadline } from '@/lib/upload-batch';
 import { quoteFlatDelivery, resolveFlatDeliveryFee, type KeralaPostalDirectory, type DeliveryRule } from '@/lib/delivery-pricing';
@@ -293,18 +293,28 @@ export default function Customize() {
     setModelReferenceError('');
     try {
       const blob = await withAbortableDeadline(
-        async (signal, reportActivity) => upload(draft.pathname, draft.file, {
-          access: 'private',
-          handleUploadUrl: '/api/customer/abaya-reference-photo',
-          clientPayload: orderId,
-          contentType: draft.file.type,
-          multipart: false,
-          abortSignal: signal,
-          onUploadProgress: (event) => {
-            reportActivity();
-            setModelReferenceProgress(Math.min(99, Math.max(0, event.percentage || 0)));
-          },
-        }),
+        async (signal, reportActivity) => {
+          const modeResponse = await fetch('/api/customer/abaya-reference-photo', { method: 'GET', cache: 'no-store', signal });
+          if (!modeResponse.ok) throw new ImageUploadError('token', 'Reference photo storage is not configured for this deployment.');
+          const mode = (await modeResponse.json().catch(() => null))?.mode;
+          reportActivity();
+          if (mode !== 'presigned' && mode !== 'client-token') throw new ImageUploadError('token', 'Reference photo storage returned an unsupported upload mode.');
+          const options = {
+            access: 'private' as const,
+            handleUploadUrl: '/api/customer/abaya-reference-photo',
+            clientPayload: orderId,
+            contentType: draft.file.type,
+            multipart: false,
+            abortSignal: signal,
+            onUploadProgress: (event: { percentage?: number }) => {
+              reportActivity();
+              setModelReferenceProgress(Math.min(99, Math.max(0, event.percentage || 0)));
+            },
+          };
+          return mode === 'presigned'
+            ? uploadPresigned(draft.pathname, draft.file, options)
+            : upload(draft.pathname, draft.file, options);
+        },
         { timeoutMs: 120_000, idleTimeoutMs: 45_000, onTimeout: (kind) => new ImageUploadError(kind === 'idle' ? 'blob' : 'confirmation', kind === 'idle' ? 'The photo upload stopped reporting progress. Retry the photo; your other selections are unchanged.' : 'The photo upload did not finish before its deadline. Retry the photo; your other selections are unchanged.', { fileName: draft.file.name }) },
       );
       if (!isModelReferenceUrl(blob.url, orderId)) throw new ImageUploadError('confirmation', 'Storage returned an invalid private photo reference. Please retry.', { fileName: draft.file.name });

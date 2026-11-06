@@ -1,12 +1,21 @@
-import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
+import { handleUpload, handleUploadPresigned, type HandleUploadBody, type HandleUploadPresignedBody } from '@vercel/blob/client';
+import { issueSignedToken } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 import { ABAYA_REFERENCE_MAX_BYTES, ABAYA_REFERENCE_TYPES, isModelReferencePath, isValidOrderReference, MODEL_REFERENCE_PREFIX } from '@/lib/abaya-customization';
+import { resolveSharedBlobStorage, sharedBlobAuthOptions, sharedBlobUploadMode } from '@/lib/shared-blob-storage.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+export async function GET() {
+  const mode = sharedBlobUploadMode(process.env);
+  if (mode === 'unavailable') return NextResponse.json({ error: 'Reference photo storage is not configured.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+  return NextResponse.json({ mode }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
 export async function POST(request: Request) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  const storage = resolveSharedBlobStorage(process.env);
+  if (!storage.configured) {
     return NextResponse.json({ error: 'Reference photo storage is not configured.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
   }
   const origin = request.headers.get('origin');
@@ -15,6 +24,32 @@ export async function POST(request: Request) {
   }
   try {
     const body = await request.json() as HandleUploadBody;
+    if (storage.mode === 'oidc') {
+      const result = await handleUploadPresigned({
+        body: body as HandleUploadPresignedBody,
+        request,
+        getSignedToken: async (pathname, clientPayload) => {
+          const orderId = clientPayload || '';
+          if (!isValidOrderReference(orderId) || !pathname.startsWith(MODEL_REFERENCE_PREFIX) || !isModelReferencePath(pathname, orderId)) {
+            throw new Error('Invalid garment reference photo request.');
+          }
+          const token = await issueSignedToken({
+            ...sharedBlobAuthOptions(process.env),
+            pathname,
+            operations: ['put'],
+            allowedContentTypes: [...ABAYA_REFERENCE_TYPES],
+            maximumSizeInBytes: ABAYA_REFERENCE_MAX_BYTES,
+          });
+          return { token, urlOptions: {
+            allowedContentTypes: [...ABAYA_REFERENCE_TYPES],
+            maximumSizeInBytes: ABAYA_REFERENCE_MAX_BYTES,
+            addRandomSuffix: false,
+            allowOverwrite: true,
+          } };
+        },
+      });
+      return NextResponse.json(result, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const result = await handleUpload({
       body,
       request,

@@ -1,4 +1,4 @@
-import { list, get, put, del } from '@vercel/blob';
+import { list as blobList, get as blobGet, put as blobPut, del as blobDel } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/app/admin/guard';
 import { products as catalog } from '@/lib/catalog';
@@ -22,6 +22,7 @@ import { projectPublicStoreProduct } from '@/lib/public-store-product.mjs';
 import { buildAdminStoreResponse } from '@/lib/admin-store-response.mjs';
 import { validateAbayaModelCodes } from '@/lib/abaya-model-management.mjs';
 import { findRecordAcrossCatalogs, getUniqueCatalogRecordIds, isAbayaRecord, keepLegacyAbayaAsProduct, moveLegacyAbayaToManagement, replaceCatalogCollection, splitProductRecords } from '@/lib/abaya-data-separation.mjs';
+import { resolveSharedBlobStorage, sharedBlobAuthOptions } from '@/lib/shared-blob-storage.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,6 +30,11 @@ export const maxDuration = 60;
 const STORE_FILE = 'arabian-tailors/store.json';
 const ORDER_PREFIX = 'arabian-tailors/orders/';
 const ADMIN_ORDER_BASE_URL = 'https://arabian-tailors.vercel.app';
+const sharedStorageConfigured = () => resolveSharedBlobStorage(process.env).configured;
+const list = (options: any = {}) => blobList({ ...options, ...sharedBlobAuthOptions(process.env) });
+const get = (url: string, options: any = {}) => blobGet(url, { ...options, ...sharedBlobAuthOptions(process.env) });
+const put = (pathname: string, body: any, options: any = {}) => blobPut(pathname, body, { ...options, ...sharedBlobAuthOptions(process.env) });
+const del = (url: string | string[], options: any = {}) => blobDel(url, { ...options, ...sharedBlobAuthOptions(process.env) });
 const statuses = ['New', 'In production', 'Ready to ship', 'Delivered', 'Cancelled'] as const;
 type Store = { products: any[]; abayaProducts: any[]; settings: Record<string, any>; abayaCatalogManaged?: boolean };
 const defaultStore = (): Store => ({ products: catalog.map(p => ({ ...p, stock: 0, available: true, stitchingType: '', options: [] })), abayaProducts: [], settings: {}, abayaCatalogManaged: false });
@@ -303,7 +309,7 @@ function setOptionPhotos(option: any, images: string[]) {
 }
 
 export async function GET() {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Shared storage is not connected.' }, 503);
+  if (!sharedStorageConfigured()) return json({ error: 'Shared storage is not connected for this environment.' }, 503);
   try {
     const store = await readStore();
     const migratedCustomization = addDefaultCustomization(store);
@@ -346,7 +352,7 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   if (!await isAdminAuthenticated()) return json({ error: 'Sign in required.' }, 401);
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Shared storage is not connected.' }, 503);
+  if (!sharedStorageConfigured()) return json({ error: 'Shared storage is not connected for this environment.' }, 503);
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'Invalid request.' }, 400);
   try {
@@ -570,9 +576,9 @@ export async function PUT(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    console.error('[store-data] Order persistence unavailable: BLOB_READ_WRITE_TOKEN is not configured', { vercelEnvironment: process.env.VERCEL_ENV || 'unknown' });
-    return json({ error: 'Shared storage is not connected.' }, 503);
+  if (!sharedStorageConfigured()) {
+    console.error('[store-data] Order persistence unavailable: shared Blob authentication is not configured', { vercelEnvironment: process.env.VERCEL_ENV || 'unknown' });
+    return json({ error: 'Shared storage is not connected for this environment.' }, 503);
   }
   const order = await request.json().catch(() => null);
   if (!order || !validText(order.id, 100) || !/^AT-(?:[0-9]{6,}|[0-9a-f]{32})$/i.test(order.id) || !validText(order.customer, 160) || !validText(order.product, 240) || !Number.isFinite(order.total) || order.total < 0 || !statuses.includes(order.status) || !validEmail(order.delivery?.email) || !validText(order.delivery?.phone, 40) || !validText(order.delivery?.address, 500) || !validText(order.delivery?.city, 100) || !validText(order.delivery?.postal, 20)) return json({ error: 'Invalid order.' }, 400);

@@ -1,10 +1,31 @@
-import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
+import { handleUpload, handleUploadPresigned, type HandleUploadBody, type HandleUploadPresignedBody } from '@vercel/blob/client';
+import { issueSignedToken } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/app/admin/guard';
 import { isMeasurementGuideImagePath, isMeasurementGuideVideoPath, MEASUREMENT_GUIDE_MAX_IMAGE_BYTES, MEASUREMENT_GUIDE_MAX_VIDEO_BYTES, measurementGuideMimeTypeForPath, measurementGuideVideoMimeTypeForPath } from '@/lib/measurement-guides.mjs';
+import { resolveSharedBlobStorage, sharedBlobAuthOptions, sharedBlobUploadMode } from '@/lib/shared-blob-storage.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+function uploadPolicy(pathname: string) {
+  if (isMeasurementGuideVideoPath(pathname)) return {
+    allowedContentTypes: [measurementGuideVideoMimeTypeForPath(pathname)],
+    addRandomSuffix: false,
+    maximumSizeInBytes: MEASUREMENT_GUIDE_MAX_VIDEO_BYTES,
+  };
+  if (isMeasurementGuideImagePath(pathname)) return {
+    allowedContentTypes: [measurementGuideMimeTypeForPath(pathname)],
+    addRandomSuffix: false,
+    maximumSizeInBytes: MEASUREMENT_GUIDE_MAX_IMAGE_BYTES,
+  };
+  if (!/^arabian-tailors\/product-images\/[0-9a-f-]{36}\.(jpg|png|webp|gif)$/.test(pathname)) throw new UploadTokenError('INVALID_UPLOAD_PATH', 400, 'Invalid image upload path.');
+  return {
+    allowedContentTypes: allowedTypes,
+    addRandomSuffix: true,
+    maximumSizeInBytes: 5 * 1024 ** 4,
+  };
+}
 
 const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 type SafeUploadError = Error & { code?: string; status?: number; statusCode?: number };
@@ -25,14 +46,15 @@ function logUploadFailure(error: unknown) {
     errorName: safe(details.name),
     errorCode: safe(details.code),
     statusCode: Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? statusCode : undefined,
-    blobTokenConfigured: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+    blobStorageConfigured: resolveSharedBlobStorage(process.env).configured,
     vercelEnvironment: process.env.VERCEL_ENV || 'unknown',
   });
 }
 
 export async function POST(request: Request) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    console.error('[admin-product-image] Token request unavailable', { stage: 'token', code: 'STORAGE_NOT_CONFIGURED', vercelEnvironment: process.env.VERCEL_ENV || 'unknown' });
+  const storage = resolveSharedBlobStorage(process.env);
+  if (!storage.configured) {
+    console.error('[admin-product-image] Upload authorization unavailable', { stage: 'token', code: 'STORAGE_NOT_CONFIGURED', vercelEnvironment: process.env.VERCEL_ENV || 'unknown' });
     return NextResponse.json({ error: 'Shared image storage is not connected.', code: 'STORAGE_NOT_CONFIGURED' }, { status: 503 });
   }
   try {
@@ -43,27 +65,31 @@ export async function POST(request: Request) {
     } catch {
       return NextResponse.json({ error: 'Invalid upload authorization request.', code: 'INVALID_UPLOAD_REQUEST' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
     }
+    if (storage.mode === 'oidc') {
+      const response = await handleUploadPresigned({
+        body: body as HandleUploadPresignedBody,
+        request,
+        getSignedToken: async (pathname) => {
+          if (!await isAdminAuthenticated()) throw new UploadTokenError('ADMIN_AUTH_REQUIRED', 401, 'Sign in required.');
+          const policy = uploadPolicy(pathname);
+          const token = await issueSignedToken({
+            ...sharedBlobAuthOptions(process.env),
+            pathname,
+            operations: ['put'],
+            allowedContentTypes: policy.allowedContentTypes,
+            maximumSizeInBytes: policy.maximumSizeInBytes,
+          });
+          return { token, urlOptions: policy };
+        },
+      });
+      return NextResponse.json(response, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const response = await handleUpload({
       body,
       request,
       onBeforeGenerateToken: async (pathname) => {
         if (!await isAdminAuthenticated()) throw new UploadTokenError('ADMIN_AUTH_REQUIRED', 401, 'Sign in required.');
-        if (isMeasurementGuideVideoPath(pathname)) return {
-          allowedContentTypes: [measurementGuideVideoMimeTypeForPath(pathname)],
-          addRandomSuffix: false,
-          maximumSizeInBytes: MEASUREMENT_GUIDE_MAX_VIDEO_BYTES,
-        };
-        if (isMeasurementGuideImagePath(pathname)) return {
-          allowedContentTypes: [measurementGuideMimeTypeForPath(pathname)],
-          addRandomSuffix: false,
-          maximumSizeInBytes: MEASUREMENT_GUIDE_MAX_IMAGE_BYTES,
-        };
-        if (!/^arabian-tailors\/product-images\/[0-9a-f-]{36}\.(jpg|png|webp|gif)$/.test(pathname)) throw new UploadTokenError('INVALID_UPLOAD_PATH', 400, 'Invalid image upload path.');
-        return {
-          allowedContentTypes: allowedTypes,
-          addRandomSuffix: true,
-          maximumSizeInBytes: 5 * 1024 ** 4,
-        };
+        return uploadPolicy(pathname);
       },
     });
     return NextResponse.json(response, { headers: { 'Cache-Control': 'no-store' } });
@@ -75,4 +101,11 @@ export async function POST(request: Request) {
     const status = Number.isInteger(upstreamStatus) && upstreamStatus >= 400 && upstreamStatus <= 599 ? upstreamStatus : 502;
     return NextResponse.json({ error: 'The secure image upload could not be authorized.', code: 'TOKEN_GENERATION_FAILED' }, { status, headers: { 'Cache-Control': 'no-store' } });
   }
+}
+
+export async function GET() {
+  if (!await isAdminAuthenticated()) return NextResponse.json({ error: 'Sign in required.', code: 'ADMIN_AUTH_REQUIRED' }, { status: 401, headers: { 'Cache-Control': 'no-store' } });
+  const mode = sharedBlobUploadMode(process.env);
+  if (mode === 'unavailable') return NextResponse.json({ error: 'Shared image storage is not connected.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+  return NextResponse.json({ mode }, { headers: { 'Cache-Control': 'no-store' } });
 }

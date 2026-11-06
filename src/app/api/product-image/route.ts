@@ -1,8 +1,11 @@
-import { get } from '@vercel/blob';
+import { get as blobGet } from '@vercel/blob';
 import { NextRequest, NextResponse } from 'next/server';
 import { isPublicProductImagePath } from '@/lib/product-image-url';
 import { hasPublishedMeasurementGuideImage, hasPublishedMeasurementGuideVideo, isMeasurementGuideImagePath, isMeasurementGuideVideoPath } from '@/lib/measurement-guides.mjs';
 import { isAdminAuthenticated } from '@/app/admin/guard';
+import { sharedBlobAuthOptions } from '@/lib/shared-blob-storage.mjs';
+
+const get = (url: string, options: any = {}) => blobGet(url, { ...options, ...sharedBlobAuthOptions(process.env) });
 
 async function isPublishedGuideImage(pathname: string) {
   const stored = await get('arabian-tailors/store.json', { access: 'private', useCache: false });
