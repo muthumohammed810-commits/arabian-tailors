@@ -23,6 +23,7 @@ import { buildAdminStoreResponse } from '@/lib/admin-store-response.mjs';
 import { validateAbayaModelCodes } from '@/lib/abaya-model-management.mjs';
 import { findRecordAcrossCatalogs, getUniqueCatalogRecordIds, isAbayaRecord, keepLegacyAbayaAsProduct, moveLegacyAbayaToManagement, replaceCatalogCollection, splitProductRecords } from '@/lib/abaya-data-separation.mjs';
 import { resolveSharedBlobStorage, sharedBlobAuthOptions } from '@/lib/shared-blob-storage.mjs';
+import { isAdminDeleteConfirmed } from '@/lib/admin-delete-confirmation.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -497,7 +498,7 @@ export async function PUT(request: Request) {
         return json({ ok: true, order: safePayment(updated) });
       }
       if (body.action === 'delete') {
-        if (String(body.confirmation || '') !== body.id) return json({ error: 'Type the order ID to confirm deletion.' }, 400);
+        if (!isAdminDeleteConfirmed(body)) return json({ error: 'Confirm this order deletion to continue.' }, 400);
         const { blobs } = await list({ prefix: `${ORDER_PREFIX}${body.id}.json`, limit: 1 });
         const blob = blobs.find(item => item.pathname === `${ORDER_PREFIX}${body.id}.json`);
         if (blob) await del(blob.url);
@@ -557,7 +558,7 @@ export async function PUT(request: Request) {
       const matching = orders.filter((o: any) => String(o.delivery?.email || o.delivery?.phone || o.customer).toLowerCase() === body.id.toLowerCase());
       if (!matching.length) return json({ error: 'Customer not found.' }, 404);
       if (body.action === 'delete') {
-        if (!body.id.includes('@') || String(body.confirmation || '').toLowerCase() !== body.id.toLowerCase()) return json({ error: 'Type the customer email to confirm deletion.' }, 400);
+        if (!body.id.includes('@') || !isAdminDeleteConfirmed(body, { caseInsensitiveLegacyMatch: true })) return json({ error: 'Confirm this customer deletion to continue.' }, 400);
         const blobs = await listAllBlobPages((options) => list(options), { prefix: ORDER_PREFIX, limit: 1000 });
         const urls = blobs.filter(b => matching.some((o: any) => o.id && b.pathname === `${ORDER_PREFIX}${o.id}.json`)).map(b => b.url);
         if (urls.length) await del(urls);
