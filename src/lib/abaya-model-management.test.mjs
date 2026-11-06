@@ -81,8 +81,26 @@ test('Abaya admin management uses the shared Kandura card and ModelWorkspace pat
   assert.match(dashboardSource, /Measurements/);
 });
 
+test('Kandura and Abaya use the same vertical customization editor and expandable option controls', () => {
+  const editorStart = dashboardSource.indexOf('const renderProductCustomizationEditor=');
+  const editorEnd = dashboardSource.indexOf('const renderCustomizationStep=', editorStart);
+  const sharedEditor = dashboardSource.slice(editorStart, editorEnd);
+  assert.match(sharedEditor, /ModelEditorSection/);
+  assert.match(sharedEditor, /product-customization-sections/);
+  assert.doesNotMatch(sharedEditor, /custom-category-grid/);
+  assert.doesNotMatch(dashboardSource, /renderAbayaCustomizationEditor/);
+  assert.match(dashboardSource, /renderProductCustomizationEditor\(\)/);
+  assert.match(dashboardSource, /const renderCustomizationStep=[\s\S]*?expandedCustomizationOptionId===`\$\{step\.id\}:\$\{option\.id\}`/);
+  assert.match(dashboardSource, /className="model-measurement-toggle" aria-expanded=\{editingMeasurementId===field\.id\}/);
+  assert.match(dashboardSource, /function ManagedModelAdditionalSteps[\s\S]*?expandedOptionId===option\.id/);
+  assert.match(dashboardSource, /expandedMeasurementFieldId===field\.id/);
+  assert.match(dashboardSource, /className="model-option-editor"/);
+});
+
 test('Abaya saves validate model codes against existing store records and customer selections use saved model data', () => {
-  assert.match(storeRouteSource, /validateAbayaModelCodes\(body\.products, store\.products\)/);
+  assert.match(storeRouteSource, /validateAbayaModelCodes\(body\.products, store\.abayaProducts\)/);
+  assert.match(storeRouteSource, /body\.resource === 'abayaCatalog'/);
+  assert.match(storeRouteSource, /replaceCatalogCollection\(store\.products, store\.abayaProducts, 'products', body\.products\)/);
   assert.match(customizeSource, /selectedModelOption\?\.modelCustomization/);
   assert.match(customizeSource, /selectedAbayaModelEntry/);
   assert.match(customizeSource, /isAbayaModelStep\(baseCustomSteps\.find/);

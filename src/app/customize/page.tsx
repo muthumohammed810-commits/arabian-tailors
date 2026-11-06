@@ -124,6 +124,8 @@ export default function Customize() {
   const [serviceStyles, setServiceStyles] = useState<TailoringStyle[]>(defaultStyles);
   const [serviceFabrics, setServiceFabrics] = useState<Fabric[]>(defaultFabrics);
   const [shopProducts, setShopProducts] = useState<StoreProduct[]>(initialShopProducts);
+  const [abayaManagedProducts, setAbayaManagedProducts] = useState<StoreProduct[]>([]);
+  const [legacyAbayaProducts, setLegacyAbayaProducts] = useState<StoreProduct[]>([]);
   const [requestedProductId, setRequestedProductId] = useState<string | null>(null);
   const [requestedProductType, setRequestedProductType] = useState<string | null>(null);
   const [abayaCatalogManaged, setAbayaCatalogManaged] = useState(false);
@@ -175,6 +177,8 @@ export default function Customize() {
           if (data.settings.background) document.documentElement.style.setProperty('--ink', data.settings.background);
         }
         setShopProducts(data.products);
+        setAbayaManagedProducts(Array.isArray(data.abayaProducts) ? data.abayaProducts : []);
+        setLegacyAbayaProducts(Array.isArray(data.legacyAbayaProducts) ? data.legacyAbayaProducts : []);
         setAbayaCatalogManaged(data.abayaCatalogManaged === true);
         setStoreDataStatus('ready');
         const kanduras = data.products.filter((product: StoreProduct) => product.available !== false && product.category.toLowerCase() === 'kandura');
@@ -189,7 +193,7 @@ export default function Customize() {
       .catch(() => setStoreDataStatus('error'));
   }, []);
 
-  const abayaProductChoices = useMemo(() => storeDataStatus === 'ready' ? getCustomerAbayaProducts(shopProducts, { managed: abayaCatalogManaged, fallbackProducts: legacyAbayaFallbackProducts }) : [], [shopProducts, abayaCatalogManaged, storeDataStatus]);
+  const abayaProductChoices = useMemo(() => storeDataStatus === 'ready' ? getCustomerAbayaProducts([...abayaManagedProducts, ...legacyAbayaProducts], { managed: abayaCatalogManaged, fallbackProducts: legacyAbayaFallbackProducts.filter(fallback => !shopProducts.some(product => product.id === fallback.id)) }) : [], [abayaManagedProducts, legacyAbayaProducts, shopProducts, abayaCatalogManaged, storeDataStatus]);
   const requestedCatalogProduct = requestedProductId ? shopProducts.find((product) => product.id === requestedProductId) || abayaProductChoices.find((product) => product.id === requestedProductId) : undefined;
   const isAbaya = requestedCatalogProduct?.category.toLowerCase() === 'abaya' || requestedProductType?.toLowerCase() === 'abaya';
   const selectedProduct = requestedProductId && (storeDataStatus === 'ready' || !isAbaya) ? requestedCatalogProduct : undefined;
