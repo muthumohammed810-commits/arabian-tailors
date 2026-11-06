@@ -65,3 +65,16 @@ export function isGarmentReferencePhotoForOrder(design: unknown, orderId: string
 export function isAbayaReferencePhotoForOrder(design: unknown, orderId: string) {
   return isGarmentReferencePhotoForOrder(design, orderId, 'abaya');
 }
+
+/** Strict server-side shape for an Abaya reference order with no catalog product selection. */
+export function isPhotoOnlyAbayaReferenceOrder(order: any) {
+  const design = order?.design;
+  if (!order || order.productId !== undefined || order.productName !== undefined || order.productImage !== undefined || order.basePrice !== undefined
+    || !design || design.productId !== undefined || design.productName !== undefined || design.productImage !== undefined
+    || String(design.productType || '').trim().toLowerCase() !== 'abaya' || design.basePrice !== 0
+    || design.selectedModel !== undefined || !Array.isArray(design.options) || design.options.length !== 0
+    || !Array.isArray(design.customization) || design.customization.length !== 0 || design.subtotal !== 0
+    || !isAbayaReferencePhotoForOrder(design, String(order.id || ''))) return false;
+  const allowedDesignFields = new Set(['productType', 'basePrice', 'options', 'customization', 'customerReferencePhoto', 'note', 'subtotal']);
+  return Object.keys(design).every((key) => allowedDesignFields.has(key));
+}

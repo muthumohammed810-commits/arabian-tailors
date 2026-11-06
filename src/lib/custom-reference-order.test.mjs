@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createUpiPaymentUrl } from './upi-payment.ts';
+import { isPhotoOnlyAbayaReferenceOrder } from './abaya-customization.ts';
 import {
   createCustomReferenceOrderFields,
   customerPaymentAmount,
   CUSTOM_REFERENCE_ADVANCE,
+  canContinueAbayaReferenceChoice,
   isRequiredCustomizationSelectionMissing,
   updateCustomReferenceFinalPrice,
 } from './custom-reference-order.ts';
@@ -35,6 +37,43 @@ test('Abaya and Kandura model/style selection is optional, while other required 
     assert.equal(isRequiredCustomizationSelectionMissing(true, false, false, false), true, `${garment} required size/options remain required`);
     assert.equal(isRequiredCustomizationSelectionMissing(true, true, false, false), false);
   }
+});
+
+test('initial Abaya selection can continue with an uploaded reference photo and no model', () => {
+  assert.equal(canContinueAbayaReferenceChoice(false, false, false), false);
+  assert.equal(canContinueAbayaReferenceChoice(false, true, true), false, 'wait until upload completes');
+  assert.equal(canContinueAbayaReferenceChoice(false, true, false), true, 'photo-only request is selectable');
+  assert.equal(canContinueAbayaReferenceChoice(true, false, false), true, 'a selected Abaya remains valid');
+});
+
+test('photo-only Abaya reference orders are accepted only with a private order-scoped photo and empty model selections', () => {
+  const id = `AT-${'f'.repeat(32)}`;
+  const url = `https://store.blob.vercel-storage.com/arabian-tailors/order-reference-photos/${id}/123e4567-e89b-12d3-a456-426614174000.jpg`;
+  const order = {
+    id,
+    product: 'Abaya · Custom Reference',
+    subtotal: 0,
+    deliveryFee: 60,
+    discount: 0,
+    total: 60,
+    paymentMethod: 'upi',
+    design: {
+      productType: 'Abaya',
+      customerReferencePhoto: { url, fileName: 'reference.jpg', uploaded: true },
+      basePrice: 0,
+      options: [],
+      customization: [],
+      note: '',
+      subtotal: 0,
+    },
+  };
+  assert.equal(isPhotoOnlyAbayaReferenceOrder(order), true);
+  assert.equal(isPhotoOnlyAbayaReferenceOrder({ ...order, productId: 'abaya-noor' }), false);
+  assert.equal(isPhotoOnlyAbayaReferenceOrder({ ...order, design: { ...order.design, productType: 'Kandura' } }), false);
+  assert.equal(isPhotoOnlyAbayaReferenceOrder({ ...order, design: { ...order.design, basePrice: 900 } }), false);
+  assert.equal(isPhotoOnlyAbayaReferenceOrder({ ...order, design: { ...order.design, selectedModel: { id: 'model-one' } } }), false);
+  assert.equal(isPhotoOnlyAbayaReferenceOrder({ ...order, design: { ...order.design, options: ['unverified'] } }), false);
+  assert.equal(isPhotoOnlyAbayaReferenceOrder({ ...order, design: { ...order.design, customerReferencePhoto: { ...order.design.customerReferencePhoto, url: url.replace(id, `AT-${'a'.repeat(32)}`) } } }), false);
 });
 
 test('final price remains unset until an explicit valid Admin confirmation', () => {

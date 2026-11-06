@@ -6,7 +6,7 @@ import { addDefaultCustomization } from '@/lib/customization-defaults';
 import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
 import { getCustomerOrderPaymentFields } from '@/lib/upi-order-policy';
 import { createCustomReferenceOrderFields, customerPaymentAmount, CUSTOM_REFERENCE_ORDER_TYPE, updateCustomReferenceFinalPrice } from '@/lib/custom-reference-order';
-import { isGarmentReferencePhotoForOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
+import { isGarmentReferencePhotoForOrder, isPhotoOnlyAbayaReferenceOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
 import { calculateConfiguredSubtotal, calculateOrderTotal, DELIVERY_PICKUP_ORIGIN, isValidFlatDeliveryFee, matchesOrderBreakdown, publicDeliveryRules, quoteFlatDelivery, resolveFlatDeliveryFee, withDeliveryRestrictionMode, withFlatDeliveryFee } from '@/lib/delivery-pricing';
 import { isOfficialIndiaPostPinSource, isValidKeralaPinDirectory } from '@/lib/delivery-rule-csv.mjs';
 import { createWhatsAppNotificationStates, dispatchWhatsAppNotification, getWhatsAppConfiguration, isE164Phone, sendWhatsAppTemplate, templateParametersForOrder, WHATSAPP_NOTIFICATION_CHANNELS, WHATSAPP_NOTIFICATION_STATES } from '@/lib/whatsapp-order-notifications.mjs';
@@ -589,6 +589,7 @@ export async function POST(request: Request) {
   if (!paymentFields) return json({ error: 'Customer checkout currently accepts UPI orders only.' }, 400);
   const referencePhotoUrl = referencePhotoFromDesign(order.design);
   if (order.design?.customerReferencePhoto !== undefined && (!isGarmentReferencePhotoForOrder(order.design, order.id) || !referencePhotoUrl)) return json({ error: 'The customer model reference photo does not match this garment order.' }, 400);
+  const photoOnlyAbayaOrder = Boolean(referencePhotoUrl && isPhotoOnlyAbayaReferenceOrder(order));
   if (order.productId !== undefined && (!validText(order.productId, 100) || !validText(order.productName, 160) || (order.productImage !== undefined && (typeof order.productImage !== 'string' || order.productImage.length > 2000)) || !Number.isFinite(order.basePrice) || order.basePrice < 0)) return json({ error: 'Invalid product details.' }, 400);
   try {
     const store = await readStore();
@@ -607,17 +608,22 @@ export async function POST(request: Request) {
         product = fallbackStore.products[0];
       }
     }
-    if (!product || product.available === false) return json({ error: 'This product is not currently available. Refresh the page and try again.' }, 409);
-    if (order.productId && order.productName !== product.name) return json({ error: 'The product details changed. Refresh your choices before placing the order.' }, 409);
-    if (order.design?.productId !== undefined && order.design.productId !== product.id) return json({ error: 'The selected product does not match the submitted design. Refresh your choices.' }, 400);
-    if (order.design?.productName !== undefined && order.design.productName !== product.name) return json({ error: 'The product details changed. Refresh your choices before placing the order.' }, 409);
-    if (order.design?.productType !== undefined && String(order.design.productType).toLowerCase() !== String(product.category || '').toLowerCase()) return json({ error: 'The selected product category changed. Refresh your choices before placing the order.' }, 409);
-    if (order.design?.customerReferencePhoto !== undefined && !isGarmentReferencePhotoForOrder(order.design, order.id, String(product.category || ''))) return json({ error: 'The customer model reference photo does not match this product category.' }, 400);
-    if (/^abaya$/i.test(String(product.category || '').trim())
-      && !hasRequiredMeasurementValues(product.measurements, product.measurementsEnabled !== false, order.design?.measurements)) return json({ error: 'Complete all required Abaya measurements and remove values from hidden fields before placing the order.' }, 400);
-    const pricing = calculateConfiguredSubtotal(product, { ...order.design, productType: product.category }, store.products.filter((item: any) => String(item.category || '').toLowerCase() === 'fabric'));
+    if (!product && !photoOnlyAbayaOrder) return json({ error: 'This product is not currently available. Refresh the page and try again.' }, 409);
+    if (product) {
+      if (product.available === false) return json({ error: 'This product is not currently available. Refresh the page and try again.' }, 409);
+      if (order.productId && order.productName !== product.name) return json({ error: 'The product details changed. Refresh your choices before placing the order.' }, 409);
+      if (order.design?.productId !== undefined && order.design.productId !== product.id) return json({ error: 'The selected product does not match the submitted design. Refresh your choices.' }, 400);
+      if (order.design?.productName !== undefined && order.design.productName !== product.name) return json({ error: 'The product details changed. Refresh your choices before placing the order.' }, 409);
+      if (order.design?.productType !== undefined && String(order.design.productType).toLowerCase() !== String(product.category || '').toLowerCase()) return json({ error: 'The selected product category changed. Refresh your choices before placing the order.' }, 409);
+      if (order.design?.customerReferencePhoto !== undefined && !isGarmentReferencePhotoForOrder(order.design, order.id, String(product.category || ''))) return json({ error: 'The customer model reference photo does not match this product category.' }, 400);
+      if (/^abaya$/i.test(String(product.category || '').trim())
+        && !hasRequiredMeasurementValues(product.measurements, product.measurementsEnabled !== false, order.design?.measurements)) return json({ error: 'Complete all required Abaya measurements and remove values from hidden fields before placing the order.' }, 400);
+    }
+    const pricing = photoOnlyAbayaOrder
+      ? { ok: true as const, basePrice: 0, subtotal: 0 }
+      : calculateConfiguredSubtotal(product, { ...order.design, productType: product?.category }, store.products.filter((item: any) => String(item.category || '').toLowerCase() === 'fabric'));
     if (!pricing.ok) return json({ error: pricing.error }, 400);
-    if (Number(order.basePrice) !== pricing.basePrice) return json({ error: 'The product price changed. Refresh your choices before placing the order.' }, 409);
+    if (!photoOnlyAbayaOrder && Number(order.basePrice) !== pricing.basePrice) return json({ error: 'The product price changed. Refresh your choices before placing the order.' }, 409);
     const deliveryQuote = quoteFlatDelivery(order.delivery.postal, store.settings.deliveryRules || [], store.settings.keralaPinDirectory || null, resolveFlatDeliveryFee(store.settings.flatDeliveryFee), store.settings.restrictDeliveryToConfiguredRules === true);
     if (deliveryQuote.status !== 'available') return json({ error: deliveryQuote.message }, deliveryQuote.status === 'invalid' ? 400 : 503);
     const subtotal = pricing.subtotal;
@@ -641,7 +647,7 @@ export async function POST(request: Request) {
       id: order.id, customer: order.customer,
       orderType: isCustomReferenceOrder ? CUSTOM_REFERENCE_ORDER_TYPE : 'standard',
       initials: order.initials || order.customer.split(/\s+/).map((part: string) => part[0]).join('').slice(0, 2).toUpperCase(),
-      product: order.product,
+      product: photoOnlyAbayaOrder ? 'Abaya · Custom Reference' : order.product,
       ...(order.productId ? { productId: product.id, productName: product.name, productImage: product.image || product.images?.[0] || '', basePrice: pricing.basePrice } : {}),
       date: order.date || new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
       subtotal, deliveryFee, discount, total: finalTotal, status: initialCustomerOrderStatus(order.status), tone: order.tone || 'sand',
