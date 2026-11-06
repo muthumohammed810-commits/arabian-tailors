@@ -143,3 +143,21 @@ test('Abaya reference upload renders on the initial selection step before model 
   assert.match(storeRouteSource, /isPhotoOnlyAbayaReferenceOrder\(order\)/);
   assert.match(storeRouteSource, /product: photoOnlyAbayaOrder \? 'Abaya · Custom Reference' : order\.product/);
 });
+
+test('reference photo upload does not initiate payment and the existing advance/refund cards appear only after a photo is attached', () => {
+  const selectStart = customizeSource.indexOf('function selectModelReferencePhoto(');
+  const removeStart = customizeSource.indexOf('function removeModelReferencePhoto(', selectStart);
+  const uploadSelectionFlow = customizeSource.slice(selectStart, removeStart);
+  assert.doesNotMatch(uploadSelectionFlow, /openUpiApp|placeOrder|createUpiPaymentUrl/);
+  assert.match(customizeSource, /const isCustomReferenceOrder = Boolean\(\(isAbaya \|\| isKandura\) && modelReferencePhoto\?\.url\)/);
+  assert.match(customizeSource, /\{isCustomReferenceOrder && <div className="custom-reference-payment-highlights"><section className="custom-reference-advance">/);
+  assert.match(customizeSource, /₹500 ADVANCE PAYMENT[\s\S]*?100% REFUND GUARANTEE[\s\S]*?If we are unable to create your requested design, your ₹500 advance will be fully refunded\./);
+  assert.match(customizeSource, /const expectedPaymentAmount = isCustomReferenceOrder \? 500 : finalTotal/);
+  assert.match(storeRouteSource, /const isCustomReferenceOrder = Boolean\(referencePhotoUrl\)/);
+  const initialAbayaStep = customizeSource.slice(customizeSource.indexOf('Select Abaya Model'), customizeSource.indexOf(') : step === 0 && hasProductIntro'));
+  assert.match(initialAbayaStep, /ModelReferencePhotoSection[\s\S]*?\{isCustomReferenceOrder && <div className="custom-reference-payment-highlights"/);
+  assert.match(customizeSource, /remainingAfterReferenceAdvance\(total\)/);
+  assert.match(customizeSource, /Advance included in Abaya total/);
+  assert.match(customizeSource, /Remaining model balance after advance/);
+  assert.match(customizeSource, /abayaAdvanceBelowMinimum/);
+});

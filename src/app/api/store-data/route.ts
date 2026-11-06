@@ -5,7 +5,7 @@ import { products as catalog } from '@/lib/catalog';
 import { addDefaultCustomization } from '@/lib/customization-defaults';
 import { isSameOrderIntent } from '@/lib/payment-order-idempotency';
 import { getCustomerOrderPaymentFields } from '@/lib/upi-order-policy';
-import { createCustomReferenceOrderFields, customerPaymentAmount, CUSTOM_REFERENCE_ORDER_TYPE, updateCustomReferenceFinalPrice } from '@/lib/custom-reference-order';
+import { createCustomReferenceOrderFields, customerPaymentAmount, CUSTOM_REFERENCE_ADVANCE, CUSTOM_REFERENCE_ORDER_TYPE, remainingAfterReferenceAdvance, updateCustomReferenceFinalPrice } from '@/lib/custom-reference-order';
 import { isGarmentReferencePhotoForOrder, isPhotoOnlyAbayaReferenceOrder, referencePhotoFromDesign } from '@/lib/abaya-customization';
 import { calculateConfiguredSubtotal, calculateOrderTotal, DELIVERY_PICKUP_ORIGIN, isValidFlatDeliveryFee, matchesOrderBreakdown, publicDeliveryRules, quoteFlatDelivery, resolveFlatDeliveryFee, withDeliveryRestrictionMode, withFlatDeliveryFee } from '@/lib/delivery-pricing';
 import { isOfficialIndiaPostPinSource, isValidKeralaPinDirectory } from '@/lib/delivery-rule-csv.mjs';
@@ -633,7 +633,12 @@ export async function POST(request: Request) {
     if (finalTotal === null) return json({ error: 'The order total could not be calculated safely.' }, 400);
     if (!matchesOrderBreakdown(order, subtotal, deliveryFee, discount)) return json({ error: 'The price breakdown changed. Review the latest delivery fee and total before retrying.' }, 409);
     const isCustomReferenceOrder = Boolean(referencePhotoUrl);
-    const customReferenceFields = isCustomReferenceOrder ? createCustomReferenceOrderFields(finalTotal) : {};
+    const hasPricedAbayaReference = Boolean(isCustomReferenceOrder && product && String(product.category || '').trim().toLowerCase() === 'abaya');
+    const estimatedBalanceAfterAdvance = hasPricedAbayaReference ? remainingAfterReferenceAdvance(subtotal) : null;
+    if (hasPricedAbayaReference && estimatedBalanceAfterAdvance === null) return json({ error: `The selected Abaya total must be at least ₹${CUSTOM_REFERENCE_ADVANCE} to use the reference-photo advance. Remove the photo for standard checkout or choose another Abaya.` }, 400);
+    const customReferenceFields = isCustomReferenceOrder
+      ? { ...createCustomReferenceOrderFields(finalTotal), ...(estimatedBalanceAfterAdvance !== null ? { estimatedBalanceAfterAdvance } : {}) }
+      : {};
     const savedDesign = order.productId ? {
       ...order.design,
       productType: product.category,
@@ -664,7 +669,7 @@ export async function POST(request: Request) {
     const pathname = `${ORDER_PREFIX}${clean.id}.json`;
     const existing = await readBlob(pathname);
     if (existing) {
-      if (isSameOrderIntent(existing, clean)) return json({ ok: true, orderId: clean.id, statusPayment: existing.statusPayment || 'Pending verification', subtotal: existing.subtotal, deliveryFee: existing.deliveryFee, discount: existing.discount || 0, total: existing.total, orderType: existing.orderType || 'standard', ...(existing.orderType === CUSTOM_REFERENCE_ORDER_TYPE ? { estimatedTotal: existing.estimatedTotal, advanceAmount: 500, advanceStatus: existing.advanceStatus || existing.statusPayment || 'Pending verification', finalPrice: existing.finalPrice ?? null, finalPriceConfirmed: existing.finalPriceConfirmed === true, remainingBalance: existing.remainingBalance ?? null } : {}), paymentAmount: customerPaymentAmount(existing), alreadySaved: true }, 200);
+      if (isSameOrderIntent(existing, clean)) return json({ ok: true, orderId: clean.id, statusPayment: existing.statusPayment || 'Pending verification', subtotal: existing.subtotal, deliveryFee: existing.deliveryFee, discount: existing.discount || 0, total: existing.total, orderType: existing.orderType || 'standard', ...(existing.orderType === CUSTOM_REFERENCE_ORDER_TYPE ? { estimatedTotal: existing.estimatedTotal, estimatedBalanceAfterAdvance: existing.estimatedBalanceAfterAdvance ?? null, advanceAmount: CUSTOM_REFERENCE_ADVANCE, advanceStatus: existing.advanceStatus || existing.statusPayment || 'Pending verification', finalPrice: existing.finalPrice ?? null, finalPriceConfirmed: existing.finalPriceConfirmed === true, remainingBalance: existing.remainingBalance ?? null } : {}), paymentAmount: customerPaymentAmount(existing), alreadySaved: true }, 200);
       return json({ error: 'This order reference is already in use. Please contact the atelier before retrying.' }, 409);
     }
     try {
@@ -681,10 +686,10 @@ export async function POST(request: Request) {
     } catch (writeError) {
       // A concurrent request may have saved the same reference after our read.
       const racedOrder = await readBlob(pathname);
-      if (racedOrder && isSameOrderIntent(racedOrder, clean)) return json({ ok: true, orderId: clean.id, statusPayment: racedOrder.statusPayment || 'Pending verification', subtotal: racedOrder.subtotal, deliveryFee: racedOrder.deliveryFee, discount: racedOrder.discount || 0, total: racedOrder.total, orderType: racedOrder.orderType || 'standard', ...(racedOrder.orderType === CUSTOM_REFERENCE_ORDER_TYPE ? { estimatedTotal: racedOrder.estimatedTotal, advanceAmount: 500, advanceStatus: racedOrder.advanceStatus || racedOrder.statusPayment || 'Pending verification', finalPrice: racedOrder.finalPrice ?? null, finalPriceConfirmed: racedOrder.finalPriceConfirmed === true, remainingBalance: racedOrder.remainingBalance ?? null } : {}), paymentAmount: customerPaymentAmount(racedOrder), alreadySaved: true }, 200);
+      if (racedOrder && isSameOrderIntent(racedOrder, clean)) return json({ ok: true, orderId: clean.id, statusPayment: racedOrder.statusPayment || 'Pending verification', subtotal: racedOrder.subtotal, deliveryFee: racedOrder.deliveryFee, discount: racedOrder.discount || 0, total: racedOrder.total, orderType: racedOrder.orderType || 'standard', ...(racedOrder.orderType === CUSTOM_REFERENCE_ORDER_TYPE ? { estimatedTotal: racedOrder.estimatedTotal, estimatedBalanceAfterAdvance: racedOrder.estimatedBalanceAfterAdvance ?? null, advanceAmount: CUSTOM_REFERENCE_ADVANCE, advanceStatus: racedOrder.advanceStatus || racedOrder.statusPayment || 'Pending verification', finalPrice: racedOrder.finalPrice ?? null, finalPriceConfirmed: racedOrder.finalPriceConfirmed === true, remainingBalance: racedOrder.remainingBalance ?? null } : {}), paymentAmount: customerPaymentAmount(racedOrder), alreadySaved: true }, 200);
       throw writeError;
     }
-    return json({ ok: true, orderId: clean.id, statusPayment: 'Pending verification', subtotal, deliveryFee, discount, total: finalTotal, orderType: clean.orderType || 'standard', ...(isCustomReferenceOrder ? { estimatedTotal: finalTotal, advanceAmount: 500, advanceStatus: 'Pending verification', finalPrice: null, finalPriceConfirmed: false, remainingBalance: null } : {}), paymentAmount: customerPaymentAmount(clean) }, 201);
+    return json({ ok: true, orderId: clean.id, statusPayment: 'Pending verification', subtotal, deliveryFee, discount, total: finalTotal, orderType: clean.orderType || 'standard', ...(isCustomReferenceOrder ? { estimatedTotal: finalTotal, estimatedBalanceAfterAdvance: estimatedBalanceAfterAdvance ?? null, advanceAmount: CUSTOM_REFERENCE_ADVANCE, advanceStatus: 'Pending verification', finalPrice: null, finalPriceConfirmed: false, remainingBalance: null } : {}), paymentAmount: customerPaymentAmount(clean) }, 201);
   } catch (error) {
     logOrderWriteFailure(order.id, error);
     return json({ error: 'Could not save order.' }, 500);
